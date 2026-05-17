@@ -28,6 +28,42 @@ class TotalPaidHoursFromRowsTest(unittest.TestCase):
         self.assertEqual(total_paid_hours_from_rows(rows), 7.5)
 
 
+class ClockRitePaidHoursSummaryAnnualHLTest(unittest.TestCase):
+    """Paid Hours (Inc Absence) Summary: Pay ID in B, Sage in D; annual duplicated at H and L (openpyxl col 8 and 12)."""
+
+    def test_annual_from_excel_h_and_l_columns(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.cell(1, 2, "Pay ID")
+        ws.cell(1, 4, "Sage")
+        ws.cell(1, 5, "Hrs @ 1")
+        ws.cell(1, 6, "Hrs @ 2")
+        ws.cell(1, 8, "Hrs @ 3")
+        ws.cell(1, 10, "Hrs @ 4")
+        ws.cell(1, 12, "Hrs @ 5")
+        ws.cell(2, 1, "TESTCAT")
+        ws.cell(2, 2, "")
+        ws.cell(3, 1, "Jane Doe")
+        ws.cell(3, 2, 601)
+        ws.cell(3, 3, 40)
+        ws.cell(3, 5, 1.0)
+        ws.cell(3, 6, 2.0)
+        ws.cell(3, 8, 8.0)
+        ws.cell(3, 12, 8.0)
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        rows = parse_employee_hours(buf)
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual(r["Category"], "TESTCAT")
+        self.assertEqual(r["AnnualHoliday"], 8.0)
+        self.assertEqual(r["BasicHours"], 32.0)
+        self.assertEqual(r["MonFriOvertime"], 1.0)
+        self.assertEqual(r["SatSunOvertime"], 2.0)
+        self.assertEqual(r["TotalPaidHours"], 43.0)
+
+
 class PayIdNetBasicTest(unittest.TestCase):
     def test_pay_id_path_nets_annual_from_basic(self) -> None:
         wb = Workbook()
@@ -104,8 +140,25 @@ class BuildExcelNewSheetsTest(unittest.TestCase):
 
 
 _DATA = Path(__file__).resolve().parent.parent / "data"
+_TEST_DATA = _DATA / "TEST_DATA"
 _CLOCKRITE = _DATA / "Employee contract hours - clockrite.xls"
 _EMPLOYEE = _DATA / "dgross_paysummary2.xls"
+
+
+@unittest.skipUnless(
+    _TEST_DATA.is_dir() and any(_TEST_DATA.glob("*.xls")),
+    "data/TEST_DATA/*.xls not in repo",
+)
+class ClockRiteTestDataFilesTest(unittest.TestCase):
+    def test_paid_hours_summary_files_parse_without_error(self) -> None:
+        for path in sorted(_TEST_DATA.glob("*.xls")):
+            with path.open("rb") as f:
+                rows = parse_employee_hours(f)
+            self.assertGreater(len(rows), 10, msg=f"{path.name} expected many employee rows")
+
+            r0 = rows[0]
+            for key in ("BasicHours", "AnnualHoliday", "TotalPaidHours", "MonFriOvertime", "SatSunOvertime"):
+                self.assertIn(key, r0)
 
 
 @unittest.skipUnless(_CLOCKRITE.is_file() and _EMPLOYEE.is_file(), "data/*.xls fixtures not in repo")
