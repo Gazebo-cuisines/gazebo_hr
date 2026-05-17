@@ -7,6 +7,13 @@ from typing import Any
 import pandas as pd
 
 
+# ClockRite "Paid Hours (Inc Absence) Summary": Pay ID column B (0-based 1); annual
+# hours duplicated at Excel H and L (0-based 7 and 11). See payroll fix plan.
+_CLOCKRITE_PAY_ID_COL = 1
+_CLOCKRITE_SAGE_HEADER_COL = 3
+_CLOCKRITE_ANNUAL_H_COL = 7
+_CLOCKRITE_ANNUAL_L_COL = 11
+
 AGENCY_CATEGORIES = {
     "A-EL CLNR",
     "A-EL DPCH",
@@ -74,6 +81,26 @@ def _row_contains_date_range(row: list[str]) -> bool:
     return any("date range" in cell.lower() for cell in row)
 
 
+def _is_clockrite_paid_hours_summary_header(header_cells: list[str], pay_id_col: int) -> bool:
+    """True when header row matches Paid Hours (Inc Absence) grid (Pay ID in B, Sage in D)."""
+    if pay_id_col != _CLOCKRITE_PAY_ID_COL:
+        return False
+    if len(header_cells) <= _CLOCKRITE_SAGE_HEADER_COL:
+        return False
+    return _normalize_header(header_cells[_CLOCKRITE_SAGE_HEADER_COL]) == "sage"
+
+
+def _annual_holiday_clockrite_hl(row: list[str]) -> float:
+    """Annual leave from Excel columns H and L; same value — use H, then L if H empty."""
+    h = _parse_decimal(row[_CLOCKRITE_ANNUAL_H_COL] if len(row) > _CLOCKRITE_ANNUAL_H_COL else "")
+    l = _parse_decimal(row[_CLOCKRITE_ANNUAL_L_COL] if len(row) > _CLOCKRITE_ANNUAL_L_COL else "")
+    if h and l and abs(h - l) > 0.001:
+        return h
+    if h:
+        return h
+    return l
+
+
 def _is_category_row(row: list[str], pay_id_col: int) -> bool:
     pay = row[pay_id_col] if pay_id_col < len(row) else ""
     if _parse_int(pay) is not None:
@@ -108,11 +135,20 @@ def parse_employee_hours(file_obj: Any) -> list[dict[str, Any]]:
     if header_row < 0 or pay_id_col < 0:
         return _parse_employee_legacy(rows)
 
+    header_cells = rows[header_row]
+    clockrite_grid = _is_clockrite_paid_hours_summary_header(header_cells, pay_id_col)
+
     name_col = pay_id_col - 1 if pay_id_col > 0 else 0
     basic_col = pay_id_col + 1
-    mon_fri_col = pay_id_col + 2
-    sat_sun_col = pay_id_col + 3
-    annual_col = pay_id_col + 4
+    if clockrite_grid:
+        # Hrs @ 1 / Hrs @ 2 sit at 0-based 4 and 5; annual at fixed H/L (not pay_id + 4).
+        mon_fri_col = pay_id_col + 3
+        sat_sun_col = pay_id_col + 4
+        annual_col = -1
+    else:
+        mon_fri_col = pay_id_col + 2
+        sat_sun_col = pay_id_col + 3
+        annual_col = pay_id_col + 4
 
     category = ""
     result: list[dict[str, Any]] = []
@@ -138,7 +174,10 @@ def parse_employee_hours(file_obj: Any) -> list[dict[str, Any]]:
         basic_gross = _parse_decimal(row[basic_col] if basic_col < len(row) else "")
         mon_fri_ot = _parse_decimal(row[mon_fri_col] if mon_fri_col < len(row) else "")
         sat_sun_ot = _parse_decimal(row[sat_sun_col] if sat_sun_col < len(row) else "")
-        annual_holiday = _parse_decimal(row[annual_col] if annual_col < len(row) else "")
+        if clockrite_grid:
+            annual_holiday = _annual_holiday_clockrite_hl(row)
+        else:
+            annual_holiday = _parse_decimal(row[annual_col] if annual_col >= 0 and annual_col < len(row) else "")
         # Gross basic in export includes annual leave; net basic matches legacy path and FORMULAS #2.
         basic_hours = basic_gross - annual_holiday
         total_paid = basic_hours + mon_fri_ot + sat_sun_ot + annual_holiday
