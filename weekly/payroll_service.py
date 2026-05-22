@@ -633,7 +633,7 @@ _OVERALL_CATEGORY_ORDER = ("PROD", "PACK", "WRHS", "CLNR", "TECH", "OFFICE")
 
 def _overall_category_key(category: str) -> str:
     c = str(category).strip().upper()
-    if "PKNG" in c:
+    if "PKNG" in c or "DPCH" in c:
         return "PACK"
     if "PROD" in c:
         return "PROD"
@@ -643,7 +643,7 @@ def _overall_category_key(category: str) -> str:
         return "CLNR"
     if "TECH" in c:
         return "TECH"
-    if c in ("OFCE", "DPCH") or "DPCH" in c:
+    if c == "OFCE":
         return "OFFICE"
     return "OTHER"
 
