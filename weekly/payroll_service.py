@@ -353,7 +353,10 @@ def calculate_payroll(employee_rows: list[dict[str, Any]], contracted_file_obj: 
         else:
             row["ContractHourMatch"] = "Yes"
         row["ContractedHours"] = float(contracted)
-        row["Overtime"] = float(row["TotalPaidHours"]) - float(row["ContractedHours"])
+        row["Overtime"] = max(
+            0.0,
+            float(row["TotalPaidHours"]) - float(row["ContractedHours"]),
+        )
 
     agency_rows = [r for r in employee_rows if str(r["Category"]).strip().upper() in AGENCY_CATEGORIES]
     gazebo_rows = [r for r in employee_rows if str(r["Category"]).strip().upper() not in AGENCY_CATEGORIES]
