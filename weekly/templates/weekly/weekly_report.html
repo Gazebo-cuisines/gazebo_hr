@@ -178,7 +178,7 @@
 			{% csrf_token %}
 			<div class="mb-3">
 				<div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
-					<label class="form-label mb-0" for="id_employee_file">Employee hours file (.xls / .xlsx)</label>
+					<label class="form-label mb-0" for="id_employee_file">Paid Hour (Incl. Absence) Summary</label>
 					<button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#helpEmployeeModal">Help</button>
 				</div>
 				<p class="form-text" id="hint-employee">Upload a payroll or time export; it must include <strong>Pay ID</strong>. Open <strong>Help</strong> above for a full walkthrough.</p>
@@ -191,7 +191,7 @@
 			</div>
 			<div class="mb-3">
 				<div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
-					<label class="form-label mb-0" for="id_contracted_file">Contract hours file (.xls / .xlsx)</label>
+					<label class="form-label mb-0" for="id_contracted_file">Employee Details (Advanced)</label>
 					<button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#helpContractModal">Help</button>
 				</div>
 				<p class="form-text" id="hint-contract">Upload your Clockrite or HR contract-hours export. <strong>Payroll number</strong> must match the Pay ID in the employee file.</p>

@@ -46,8 +46,8 @@ class ClockRitePaidHoursSummaryAnnualHLTest(unittest.TestCase):
         ws.cell(3, 1, "Jane Doe")
         ws.cell(3, 2, 601)
         ws.cell(3, 3, 40)
-        ws.cell(3, 5, 1.0)
-        ws.cell(3, 6, 2.0)
+        ws.cell(3, 4, 1.0)
+        ws.cell(3, 5, 2.0)
         ws.cell(3, 8, 8.0)
         ws.cell(3, 12, 8.0)
         buf = BytesIO()
@@ -192,8 +192,21 @@ class BuildExcelNewSheetsTest(unittest.TestCase):
 
 _DATA = Path(__file__).resolve().parent.parent / "data"
 _TEST_DATA = _DATA / "TEST_DATA"
+_OVERTIME_TEST = _DATA / "ovettime_error_test_data" / "dgross_paysummary2 (3).xls"
 _CLOCKRITE = _DATA / "Employee contract hours - clockrite.xls"
 _EMPLOYEE = _DATA / "dgross_paysummary2.xls"
+
+
+@unittest.skipUnless(_OVERTIME_TEST.is_file(), "data/ovettime_error_test_data fixture not in repo")
+class ClockRiteOvertimeColumnRegressionTest(unittest.TestCase):
+    def test_colleague_paysummary_747_and_579(self) -> None:
+        with _OVERTIME_TEST.open("rb") as f:
+            rows = {r["SageNo"]: r for r in parse_employee_hours(f)}
+        self.assertEqual(rows[747]["MonFriOvertime"], 5.5)
+        self.assertEqual(rows[747]["TotalPaidHours"], 46.75)
+        self.assertEqual(rows[579]["MonFriOvertime"], 9.25)
+        self.assertEqual(rows[579]["SatSunOvertime"], 8.5)
+        self.assertEqual(rows[579]["TotalPaidHours"], 17.75)
 
 
 @unittest.skipUnless(
