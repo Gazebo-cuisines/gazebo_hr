@@ -10,6 +10,7 @@ urlpatterns = [
 	path('logout/', views.logout_view, name='logout'),
 	path('dashboard/', views.dashboard, name='dashboard'),
 	path('dashboard/weekly-report/', views.weekly_report, name='weekly_report'),
+	path('dashboard/weekly-report/clear/', views.weekly_clear_results, name='weekly_clear_results'),
 	path('dashboard/weekly-report/help/', views.weekly_help, name='weekly_help'),
 	path('dashboard/case-studies/', views.case_studies, name='case_studies'),
 	path('dashboard/case-studies/<slug:case_id>/', views.case_study_detail, name='case_study_detail'),

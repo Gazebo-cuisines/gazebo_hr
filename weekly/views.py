@@ -297,6 +297,14 @@ def weekly_report(request: HttpRequest):
 	)
 
 
+@require_http_methods(['POST'])
+def weekly_clear_results(request: HttpRequest):
+	request.session.pop('weekly_last_result', None)
+	request.session.modified = True
+	messages.success(request, 'Previous results cleared.')
+	return redirect('weekly:weekly_report')
+
+
 def _parse_non_hourly_names(raw: str) -> set[str]:
 	names: set[str] = set()
 	for line in (raw or '').splitlines():
