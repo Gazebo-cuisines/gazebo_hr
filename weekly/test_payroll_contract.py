@@ -64,6 +64,57 @@ class ClockRitePaidHoursSummaryAnnualHLTest(unittest.TestCase):
         self.assertEqual(r["TotalPaidHours"], 43.0)
 
 
+class SagePayRefContractAliasTest(unittest.TestCase):
+    """When Sage Pay Ref != Payroll Number in ClockRite block, Pay ID joins on Sage."""
+
+    def test_sage_pay_ref_aliases_contract_hours_for_pay_id_join(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        r = 0
+        for label, val in (
+            ("Contract Hrs", 41.25),
+            ("Sage Pay Ref", 1528),
+            ("Payroll Number", 1344),
+        ):
+            r += 1
+            ws.cell(r, 6, label)
+            ws.cell(r, 7, val)
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        by_payroll, _ = parse_contracted_hours(buf)
+        self.assertAlmostEqual(by_payroll[1344], 41.25, places=2)
+        self.assertAlmostEqual(by_payroll[1528], 41.25, places=2)
+
+    def test_calculate_payroll_joins_on_sage_no_when_payroll_number_differs(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        r = 0
+        for label, val in (
+            ("Contract Hrs", 40.0),
+            ("Sage Pay Ref", 1528),
+            ("Payroll Number", 1344),
+        ):
+            r += 1
+            ws.cell(r, 6, label)
+            ws.cell(r, 7, val)
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        employees = [
+            {
+                "SageNo": 1528,
+                "Name": "S PATEL EOLL",
+                "Category": "TEST",
+                "TotalPaidHours": 45.0,
+            },
+        ]
+        result = calculate_payroll(employees, buf)
+        self.assertEqual(result.rows[0]["ContractHourMatch"], "Yes")
+        self.assertEqual(result.rows[0]["ContractedHours"], 40.0)
+        self.assertEqual(result.rows[0]["Overtime"], 5.0)
+
+
 class PayIdNetBasicTest(unittest.TestCase):
     def test_pay_id_path_nets_annual_from_basic(self) -> None:
         wb = Workbook()

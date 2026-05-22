@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 
 import pandas as pd
+
+
+logger = logging.getLogger(__name__)
 
 
 # ClockRite "Paid Hours (Inc Absence) Summary": Pay ID column B (0-based 1); annual
@@ -258,6 +262,28 @@ def _contract_hrs_value_in_row(row: list[str]) -> float | None:
     return None
 
 
+def _sage_pay_ref_ids_near(rows: list[list[str]], r_payroll: int, row_span: int = 22, row_forward: int = 8) -> list[int]:
+    """ClockRite employee blocks may put Sage Pay Ref on another row than Payroll Number (Sage ≠ Prox ID)."""
+    seen: set[int] = set()
+    out: list[int] = []
+    r0 = max(0, r_payroll - row_span)
+    r1 = min(len(rows), r_payroll + row_forward)
+    for rr in range(r0, r1):
+        row = rows[rr]
+        for c, cell in enumerate(row):
+            if _normalize_header(cell) != "sagepayref":
+                continue
+            if c + 1 >= len(row):
+                continue
+            sid = _parse_int(row[c + 1])
+            if sid is None or sid <= 0:
+                continue
+            if sid not in seen:
+                seen.add(sid)
+                out.append(sid)
+    return out
+
+
 def _parse_clockrite_contract_report(rows: list[list[str]]) -> tuple[dict[int, float], dict[str, float]]:
     """
     Clockrite "Employee Details - Advanced" XLS: repeated blocks with label rows
@@ -297,6 +323,16 @@ def _parse_clockrite_contract_report(rows: list[list[str]]) -> tuple[dict[int, f
                     if name_key:
                         by_name[name_key] = hours
                     break
+            for sid in _sage_pay_ref_ids_near(rows, r):
+                if sid == pay_no:
+                    continue
+                by_payroll[sid] = hours
+                logger.debug(
+                    "Contract hours: SagePayRef %s aliased to PayrollNumber %s hours=%s",
+                    sid,
+                    pay_no,
+                    hours,
+                )
     return by_payroll, by_name
 
 
@@ -350,6 +386,12 @@ def calculate_payroll(employee_rows: list[dict[str, Any]], contracted_file_obj: 
         if contracted is None:
             contracted = by_name.get(str(row["Name"]).upper(), 0.0)
             row["ContractHourMatch"] = "Yes" if contracted else "No"
+            if row["ContractHourMatch"] == "No":
+                logger.debug(
+                    "Contract match miss: SageNo=%s Name=%s (no PayrollNumber/SagePayRef alias or name key)",
+                    row.get("SageNo"),
+                    row.get("Name"),
+                )
         else:
             row["ContractHourMatch"] = "Yes"
         row["ContractedHours"] = float(contracted)
