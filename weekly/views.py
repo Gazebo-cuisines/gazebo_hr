@@ -23,7 +23,7 @@ from .payroll_service import (
 	parse_employee_hours,
 	total_paid_hours_from_rows,
 )
-from .case_studies_data import CASE_STUDIES
+from .case_studies_data import CASE_STUDIES, get_case_study
 from .export_service import (
 	add_branding_cover_sheet,
 	build_csv_bytes,
@@ -222,8 +222,6 @@ def weekly_help(request: HttpRequest):
 
 @require_GET
 def case_studies(request: HttpRequest):
-	active_id = request.GET.get('case') or (CASE_STUDIES[0]['id'] if CASE_STUDIES else '')
-	active = next((c for c in CASE_STUDIES if c['id'] == active_id), CASE_STUDIES[0] if CASE_STUDIES else None)
 	return render(
 		request,
 		'weekly/case_studies.html',
@@ -231,7 +229,23 @@ def case_studies(request: HttpRequest):
 			'title': 'Case studies — Gazebo',
 			'page_heading': 'Case studies',
 			'case_studies': CASE_STUDIES,
-			'active_case': active,
+		},
+	)
+
+
+@require_GET
+def case_study_detail(request: HttpRequest, case_id: str):
+	case = get_case_study(case_id)
+	if case is None:
+		from django.http import Http404
+		raise Http404('Case study not found')
+	return render(
+		request,
+		'weekly/case_study_detail.html',
+		{
+			'title': f'{case["title"]} — Case studies',
+			'page_heading': case['title'],
+			'case': case,
 		},
 	)
 

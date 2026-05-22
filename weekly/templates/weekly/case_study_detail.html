@@ -1,0 +1,101 @@
+{% extends "weekly/dashboard_base.html" %}
+{% block extra_head %}
+<style>
+
+.case-study-detail h1 { color: #003078; }
+.case-study-detail__back {
+	display: inline-block;
+	margin-bottom: 1rem;
+	font-size: 0.95rem;
+}
+.case-study-detail__meta {
+	color: #505a5f;
+	margin-bottom: 1.25rem;
+}
+.case-study-detail__tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem;
+	margin-bottom: 1rem;
+}
+.case-study-detail__tag {
+	font-size: 0.75rem;
+	background: #f1f4f8;
+	color: #003078;
+	padding: 0.2rem 0.55rem;
+	border-radius: 4px;
+}
+.case-study-detail__lead {
+	font-size: 1.1rem;
+	color: #0b0c0c;
+	line-height: 1.55;
+	margin-bottom: 1.5rem;
+}
+.case-study-detail h2 {
+	font-size: 1.05rem;
+	margin-top: 1.5rem;
+	color: #0b0c0c;
+}
+.case-study-detail p,
+.case-study-detail li { color: #0b0c0c; line-height: 1.55; }
+.case-study-detail ul { padding-left: 1.25rem; }
+.case-study-callout {
+	background: #f1f4f8;
+	border-left: 4px solid #003078;
+	padding: 0.85rem 1rem;
+	border-radius: 6px;
+	margin: 1.5rem 0;
+}
+.case-study-contact {
+	background: #fff8e8;
+	border-left: 4px solid #f47738;
+	padding: 0.85rem 1rem;
+	border-radius: 6px;
+	margin-top: 2rem;
+}
+</style>
+{% endblock %}
+{% block dashboard_content %}
+<article class="case-study-detail">
+	<a class="case-study-detail__back" href="{% url 'weekly:case_studies' %}">&larr; All case studies</a>
+
+	<p class="case-study-detail__meta"><strong>Case study</strong> &middot; {{ case.tab_label }}</p>
+	<div class="case-study-detail__tags">
+		{% for tag in case.tags %}
+		<span class="case-study-detail__tag">{{ tag }}</span>
+		{% endfor %}
+	</div>
+
+	<h1 class="heading-xl">{{ case.title }}</h1>
+	<p class="case-study-detail__lead">{{ case.summary }}</p>
+
+	<div class="case-study-callout">
+		<strong>Exception, not a bug.</strong> The current weekly report implementation is fine for normal use.
+		This article describes a known data-timing situation between the two ClockRite exports.
+	</div>
+
+	{% for sec in case.sections %}
+	<h2>{{ sec.heading }}</h2>
+	{% if sec.body|length == 1 %}
+	<p>{{ sec.body.0 }}</p>
+	{% else %}
+	<ul>
+		{% for line in sec.body %}
+		<li>{{ line }}</li>
+		{% endfor %}
+	</ul>
+	{% endif %}
+	{% endfor %}
+
+	<div class="case-study-contact">
+		<strong>If you have any problem after following the steps above:</strong>
+		contact <strong>HR</strong> first (employee setup and contract export), then the <strong>Developer</strong>
+		if both exports contain the Pay ID but match still shows No.
+	</div>
+
+	<p class="mt-4">
+		<a class="btn btn-outline-primary btn-sm" href="{% url 'weekly:case_studies' %}">&larr; Back to case studies</a>
+		<a class="btn btn-primary btn-sm" href="{% url 'weekly:weekly_report' %}">Open weekly report</a>
+	</p>
+</article>
+{% endblock %}

@@ -1,143 +1,121 @@
 {% extends "weekly/dashboard_base.html" %}
 {% block extra_head %}
 <style>
-.case-studies-page { max-width: 920px; }
-.case-studies-page h1 { color: #003078; }
+.case-studies-index { max-width: 1100px; }
+.case-studies-index h1 { color: #003078; }
 .case-studies-search {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 0.5rem;
 	align-items: center;
-	margin-bottom: 1rem;
+	margin-bottom: 1.5rem;
 }
-.case-studies-search input {
-	max-width: 22rem;
+.case-studies-search input { max-width: 24rem; }
+.case-studies-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+	gap: 1.25rem;
 }
-.case-studies-tabs {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.25rem;
-	border-bottom: 2px solid #e6ecf5;
-	margin-bottom: 1.25rem;
-}
-.case-studies-tabs .nav-link {
-	border: 0;
-	border-radius: 6px 6px 0 0;
-	color: #003078;
-	font-weight: 600;
-	padding: 0.5rem 1rem;
-	text-decoration: none;
-	background: transparent;
-}
-.case-studies-tabs .nav-link:hover { background: #f1f4f8; }
-.case-studies-tabs .nav-link.active {
-	background: #003078;
-	color: #fff;
-}
-.case-study-card {
+.case-study-tile {
 	background: #fff;
 	border: 1px solid #e6ecf5;
-	border-radius: 8px;
-	padding: 1.25rem 1.5rem;
+	border-radius: 10px;
+	padding: 1.25rem 1.35rem;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	transition: box-shadow 0.15s ease, border-color 0.15s ease;
+	text-decoration: none;
+	color: inherit;
 }
-.case-study-card h2 {
+.case-study-tile:hover {
+	border-color: #003078;
+	box-shadow: 0 4px 14px rgba(0, 48, 120, 0.12);
+	color: inherit;
+}
+.case-study-tile__label {
+	font-size: 0.75rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
 	color: #003078;
-	font-size: 1.25rem;
-	margin-top: 0;
+	margin-bottom: 0.35rem;
 }
-.case-study-card h3 {
-	font-size: 1rem;
-	margin-top: 1.25rem;
-	color: #0b0c0c;
+.case-study-tile__title {
+	font-size: 1.15rem;
+	font-weight: 700;
+	color: #003078;
+	margin: 0 0 0.5rem;
+	line-height: 1.3;
 }
-.case-study-card p,
-.case-study-card li { color: #0b0c0c; }
-.case-study-card ul { padding-left: 1.25rem; }
-.case-study-summary {
+.case-study-tile__summary {
 	color: #505a5f;
+	font-size: 0.95rem;
+	flex: 1;
 	margin-bottom: 1rem;
+	line-height: 1.5;
 }
-.case-study-callout {
+.case-study-tile__tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem;
+	margin-bottom: 0.75rem;
+}
+.case-study-tile__tag {
+	font-size: 0.7rem;
 	background: #f1f4f8;
-	border-left: 4px solid #003078;
-	padding: 0.75rem 1rem;
-	border-radius: 6px;
-	margin: 1rem 0;
+	color: #003078;
+	padding: 0.15rem 0.5rem;
+	border-radius: 4px;
 }
-.case-study-contact {
-	background: #fff8e8;
-	border-left: 4px solid #f47738;
-	padding: 0.75rem 1rem;
-	border-radius: 6px;
-	margin-top: 1.25rem;
+.case-study-tile__cta {
+	font-size: 0.9rem;
+	font-weight: 600;
+	color: #1d70b8;
+	margin-top: auto;
 }
-.case-study-item.is-hidden { display: none !important; }
+.case-study-tile.is-hidden { display: none !important; }
 .case-studies-empty {
 	display: none;
 	color: #505a5f;
-	padding: 1rem 0;
+	padding: 2rem 0;
+	text-align: center;
 }
 .case-studies-empty.is-visible { display: block; }
 </style>
 {% endblock %}
 {% block dashboard_content %}
-<div class="case-studies-page">
+<div class="case-studies-index">
 	<h1 class="heading-xl">{{ page_heading }}</h1>
-	<p class="lead">Real situations explained. Use search to filter topics. The weekly report logic is working as designed unless noted below.</p>
+	<p class="lead">Browse topics like a blog. Pick a card to read the full case study.</p>
 
 	<div class="case-studies-search">
 		<label class="visually-hidden" for="case-studies-search-input">Search case studies</label>
-		<input type="search" class="form-control" id="case-studies-search-input" placeholder="Search case studies (e.g. contract, new employee, HR)…" autocomplete="off">
+		<input type="search" class="form-control" id="case-studies-search-input" placeholder="Search (e.g. contract, new employee, HR)…" autocomplete="off">
 		<button type="button" class="btn btn-outline-secondary btn-sm" id="case-studies-search-clear">Clear</button>
 	</div>
 
-	<nav class="case-studies-tabs" aria-label="Case study topics" id="case-studies-tabs">
-		{% for case in case_studies %}
-		<a
-			class="nav-link case-studies-tab{% if active_case.id == case.id %} active{% endif %}"
-			href="{% url 'weekly:case_studies' %}?case={{ case.id }}"
-			data-case-id="{{ case.id }}"
-			data-search-text="{{ case.title }} {{ case.tab_label }} {{ case.summary }} {% for t in case.tags %}{{ t }} {% endfor %}"
-		>{{ case.tab_label }}</a>
-		{% endfor %}
-	</nav>
-
 	<p class="case-studies-empty" id="case-studies-empty" role="status">No case studies match your search.</p>
 
-	{% for case in case_studies %}
-	<article
-		class="case-study-item case-study-card{% if active_case.id != case.id %} d-none{% endif %}"
-		id="case-{{ case.id }}"
-		data-case-id="{{ case.id }}"
-		data-search-text="{{ case.title }} {{ case.tab_label }} {{ case.summary }} {% for t in case.tags %}{{ t }} {% endfor %}{% for sec in case.sections %}{{ sec.heading }} {% for line in sec.body %}{{ line }} {% endfor %}{% endfor %}"
-	>
-		<h2>{{ case.title }}</h2>
-		<p class="case-study-summary">{{ case.summary }}</p>
-
-		<div class="case-study-callout">
-			<strong>Exception, not a bug.</strong> The current weekly report implementation is fine for normal use.
-			This page describes a known data-timing situation between the two ClockRite exports.
-		</div>
-
-		{% for sec in case.sections %}
-		<h3>{{ sec.heading }}</h3>
-		{% if sec.body|length == 1 %}
-		<p>{{ sec.body.0 }}</p>
-		{% else %}
-		<ul>
-			{% for line in sec.body %}
-			<li>{{ line }}</li>
-			{% endfor %}
-		</ul>
-		{% endif %}
+	<div class="case-studies-grid" id="case-studies-grid">
+		{% for case in case_studies %}
+		<a
+			class="case-study-tile"
+			href="{% url 'weekly:case_study_detail' case_id=case.id %}"
+			data-search-text="{{ case.title }} {{ case.tab_label }} {{ case.summary }} {% for t in case.tags %}{{ t }} {% endfor %}"
+		>
+			<p class="case-study-tile__label">Case study</p>
+			<h2 class="case-study-tile__title">{{ case.tab_label }}</h2>
+			<div class="case-study-tile__tags">
+				{% for tag in case.tags|slice:":4" %}
+				<span class="case-study-tile__tag">{{ tag }}</span>
+				{% endfor %}
+			</div>
+			<p class="case-study-tile__summary">{{ case.summary }}</p>
+			<span class="case-study-tile__cta">Read case study &rarr;</span>
+		</a>
 		{% endfor %}
-
-		<div class="case-study-contact">
-			<strong>If you have any problem after following the steps above:</strong>
-			contact <strong>HR</strong> first (employee setup and contract export), then the <strong>Developer</strong> if both exports contain the Pay ID but match still shows No.
-		</div>
-	</article>
-	{% endfor %}
+	</div>
 </div>
 
 <script>
@@ -145,24 +123,16 @@
 	var input = document.getElementById('case-studies-search-input');
 	var clearBtn = document.getElementById('case-studies-search-clear');
 	var emptyEl = document.getElementById('case-studies-empty');
-	var tabs = document.querySelectorAll('.case-studies-tab');
-	var items = document.querySelectorAll('.case-study-item');
+	var tiles = document.querySelectorAll('.case-study-tile');
 	if (!input) return;
 
 	function applySearch() {
 		var q = (input.value || '').trim().toLowerCase();
 		var anyVisible = false;
-		tabs.forEach(function (tab) {
-			var text = (tab.getAttribute('data-search-text') || '').toLowerCase();
+		tiles.forEach(function (tile) {
+			var text = (tile.getAttribute('data-search-text') || '').toLowerCase();
 			var show = !q || text.indexOf(q) !== -1;
-			tab.classList.toggle('is-hidden', !show);
-			if (show) anyVisible = true;
-		});
-		items.forEach(function (item) {
-			var text = (item.getAttribute('data-search-text') || '').toLowerCase();
-			var show = !q || text.indexOf(q) !== -1;
-			item.classList.toggle('is-hidden', !show);
-			item.classList.toggle('d-none', !show);
+			tile.classList.toggle('is-hidden', !show);
 			if (show) anyVisible = true;
 		});
 		if (emptyEl) emptyEl.classList.toggle('is-visible', q.length > 0 && !anyVisible);

@@ -67,3 +67,7 @@ CASE_STUDIES: list[dict[str, Any]] = [
         ],
     },
 ]
+
+
+def get_case_study(case_id: str) -> dict[str, Any] | None:
+    return next((c for c in CASE_STUDIES if c["id"] == case_id), None)

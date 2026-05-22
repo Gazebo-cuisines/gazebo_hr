@@ -11,7 +11,7 @@
 			<a class="side-nav__link{% if request.resolver_match.url_name == 'employee_hour_contracts' %} side-nav__link--current{% endif %}" href="{% url 'weekly:employee_hour_contracts' %}">Employee hour contracts</a>
 		</li>
 		<li>
-			<a class="side-nav__link{% if request.resolver_match.url_name == 'case_studies' %} side-nav__link--current{% endif %}" href="{% url 'weekly:case_studies' %}">Case studies</a>
+			<a class="side-nav__link{% if request.resolver_match.url_name == 'case_studies' or request.resolver_match.url_name == 'case_study_detail' %} side-nav__link--current{% endif %}" href="{% url 'weekly:case_studies' %}">Case studies</a>
 		</li>
 	</ul>
 </nav>

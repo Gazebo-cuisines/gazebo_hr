@@ -4,6 +4,6 @@
 		<a class="service-nav__link{% if request.resolver_match.url_name == 'weekly_report' %} service-nav__link--current{% endif %}" href="{% url 'weekly:weekly_report' %}">Weekly report</a>
 		<a class="service-nav__link{% if request.resolver_match.url_name == 'monthly_report' %} service-nav__link--current{% endif %}" href="{% url 'weekly:monthly_report' %}">Monthly report</a>
 		<a class="service-nav__link{% if request.resolver_match.url_name == 'employee_hour_contracts' %} service-nav__link--current{% endif %}" href="{% url 'weekly:employee_hour_contracts' %}">Employee hour contracts</a>
-		<a class="service-nav__link{% if request.resolver_match.url_name == 'case_studies' %} service-nav__link--current{% endif %}" href="{% url 'weekly:case_studies' %}">Case studies</a>
+		<a class="service-nav__link{% if request.resolver_match.url_name == 'case_studies' or request.resolver_match.url_name == 'case_study_detail' %} service-nav__link--current{% endif %}" href="{% url 'weekly:case_studies' %}">Case studies</a>
 	</div>
 </nav>
