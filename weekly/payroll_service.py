@@ -145,9 +145,9 @@ def parse_employee_hours(file_obj: Any) -> list[dict[str, Any]]:
     name_col = pay_id_col - 1 if pay_id_col > 0 else 0
     basic_col = pay_id_col + 1
     if clockrite_grid:
-        # Hrs @ 1 / Hrs @ 2 sit at 0-based 4 and 5; annual at fixed H/L (not pay_id + 4).
-        mon_fri_col = pay_id_col + 3
-        sat_sun_col = pay_id_col + 4
+        # Employee totals: basic C, MF OT D, SS OT E (header may label D/E as Sage / Hrs @ 1 / @ 2).
+        mon_fri_col = pay_id_col + 2
+        sat_sun_col = pay_id_col + 3
         annual_col = -1
     else:
         mon_fri_col = pay_id_col + 2
