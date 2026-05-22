@@ -211,9 +211,9 @@ class EmpAgencyTotalDfTest(unittest.TestCase):
         )
         df = build_emp_agency_total_df(pr)
         self.assertEqual(len(df), 3)
-        emp = df[df["Summary"] == "EMP"].iloc[0]
-        ag = df[df["Summary"] == "AGENCY"].iloc[0]
-        tot = df[df["Summary"] == "TOTAL"].iloc[0]
+        emp = df[df["Category"] == "EMP"].iloc[0]
+        ag = df[df["Category"] == "AGENCY"].iloc[0]
+        tot = df[df["Category"] == "TOTAL"].iloc[0]
         for col in ("BasicHours", "TotalPaidHours"):
             self.assertAlmostEqual(float(emp[col]) + float(ag[col]), float(tot[col]), places=5)
 
@@ -260,7 +260,7 @@ class BuildExcelNewSheetsTest(unittest.TestCase):
             for r in range(first_tier_row, ws.max_row + 1)
             if ws.cell(r, 2).value == "Category" and ws.cell(r, 4).value == "BasicHours"
         ]
-        self.assertEqual(len(tier_headers), 3)
+        self.assertEqual(len(tier_headers), 4)
         header_row = tier_headers[0]
         self.assertIsNone(ws.cell(header_row, 1).value)
         self.assertEqual(ws.cell(header_row, 2).value, "Category")
@@ -275,22 +275,27 @@ class BuildExcelNewSheetsTest(unittest.TestCase):
         self.assertEqual(ws.cell(grouped_header_row + 1, 2).value, "CLNR")
 
         emp_agency_df = build_emp_agency_total_df(pr)
-        self.assertEqual(ws.cell(grouped_header_row + 4, 2).value, "EMP / Agency totals")
-        summary_header_row = grouped_header_row + 5
-        self.assertEqual(ws.cell(summary_header_row, 2).value, "Summary")
+        summary_header_row = tier_headers[2]
+        self.assertEqual(ws.cell(summary_header_row, 2).value, "Category")
         for i, row in enumerate(emp_agency_df.itertuples(index=False)):
             r = summary_header_row + 1 + i
-            self.assertEqual(ws.cell(r, 2).value, row.Summary)
+            self.assertEqual(ws.cell(r, 2).value, row.Category)
             self.assertEqual(ws.cell(r, 4).value, float(row.BasicHours))
 
         grand_tot_row = None
+        diff_row = None
         for r in range(1, ws.max_row + 1):
             if ws.cell(r, 2).value == "GRAND TOTAL":
                 grand_tot_row = r
-                break
+            if ws.cell(r, 2).value == "Difference":
+                diff_row = r
         self.assertIsNotNone(grand_tot_row)
+        self.assertIsNotNone(diff_row)
+        self.assertEqual(diff_row, grand_tot_row + 1)
         self.assertGreater(grand_tot_row, summary_header_row)
         self.assertEqual(ws.cell(grand_tot_row, 8).value, 32.0)
+        for col in (4, 5, 6, 7, 8):
+            self.assertEqual(ws.cell(diff_row, col).value, 0.0)
         wb.close()
 
     def test_all_data_rollup_totals_match(self) -> None:
@@ -351,11 +356,17 @@ class AllDataMultiTierIntegrationTest(unittest.TestCase):
             for r in range(first_tier_row, ws.max_row + 1)
             if ws.cell(r, 2).value == "Category" and ws.cell(r, 4).value == "BasicHours"
         ]
-        self.assertEqual(len(tier_headers), 3)
+        self.assertEqual(len(tier_headers), 4)
         grand_tot_row = next(
             r for r in range(1, ws.max_row + 1) if ws.cell(r, 2).value == "GRAND TOTAL"
         )
+        diff_row = next(
+            r for r in range(1, ws.max_row + 1) if ws.cell(r, 2).value == "Difference"
+        )
+        self.assertEqual(diff_row, grand_tot_row + 1)
         self.assertEqual(ws.cell(grand_tot_row, 8).value, granular_total)
+        for col in (4, 5, 6, 7, 8):
+            self.assertAlmostEqual(float(ws.cell(diff_row, col).value or 0), 0.0, places=5)
         wb.close()
 
 
