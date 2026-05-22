@@ -85,6 +85,7 @@ To sign out, use **Sign out** in the top-right corner.
 | ------- | ---------- |
 | "No processed data available" when clicking Export | Upload and process the two files first. |
 | Wrong people in the result | Check that **Pay ID** in the employee file matches **Payroll number** in the contract file. |
+| **Contract match** = **No** | That Pay ID is **not** in the contract export (often new joiners — HR may hold setup). Re-export **Employee Details (Advanced)** after HR releases them. See **Case studies** in the app nav. Contact **HR**, then the **Developer** if both exports contain the Pay ID but match stays No. Column **ContractMatchReason** shows e.g. `Pay ID not in contract export`. |
 | Numbers look off for one person | Check that ClockRite export type is the right one (see step 2). Re-export and try again. |
 | Page isn't updating | Hard-refresh the browser (Cmd-Shift-R / Ctrl-Shift-R). |
 | Can't sign in | Contact Utsav to reset the password. |

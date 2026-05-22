@@ -289,6 +289,100 @@ def _sage_pay_ref_ids_near(rows: list[list[str]], r_payroll: int, row_span: int 
     return out
 
 
+def _block_start_row(rows: list[list[str]], r_payroll: int) -> int:
+    """Row index of the block title row (Prox ID + full name) above Payroll Number."""
+    for back in range(1, 30):
+        if r_payroll - back < 0:
+            break
+        pr = rows[r_payroll - back]
+        if not pr:
+            continue
+        a0 = _to_text(pr[0])
+        if a0.isdigit() and len(a0) < 6 and len(pr) > 1 and _to_text(pr[1]):
+            return r_payroll - back
+    return max(0, r_payroll - 25)
+
+
+def _sage_pay_ref_ids_in_block(rows: list[list[str]], r_payroll: int) -> list[int]:
+    """Sage Pay Ref values within one employee block only (avoids adjacent-block bleed)."""
+    seen: set[int] = set()
+    out: list[int] = []
+    r0 = _block_start_row(rows, r_payroll)
+    r1 = min(len(rows), r_payroll + 4)
+    for rr in range(r0, r1):
+        row = rows[rr]
+        for c, cell in enumerate(row):
+            if _normalize_header(cell) != "sagepayref":
+                continue
+            if c + 1 >= len(row):
+                continue
+            sid = _parse_int(row[c + 1])
+            if sid is None or sid <= 0:
+                continue
+            if sid not in seen:
+                seen.add(sid)
+                out.append(sid)
+    return out
+
+
+def _block_names_near(rows: list[list[str]], r_payroll: int) -> tuple[str, str]:
+    """Full name from block title row; clock name from Clock Name row above Payroll Number."""
+    full_name = ""
+    clock_name = ""
+    for back in range(1, 30):
+        if r_payroll - back < 0:
+            break
+        pr = rows[r_payroll - back]
+        if not pr:
+            continue
+        for c, cell in enumerate(pr):
+            if _normalize_header(cell) == "clockname" and c + 1 < len(pr):
+                cn = _to_text(pr[c + 1])
+                if cn:
+                    clock_name = cn
+        if full_name:
+            continue
+        a0 = _to_text(pr[0])
+        if a0.isdigit() and len(a0) < 6 and len(pr) > 1:
+            candidate = _to_text(pr[1])
+            if candidate:
+                full_name = candidate
+    return full_name, clock_name
+
+
+def _parse_clockrite_display_names(rows: list[list[str]]) -> tuple[dict[int, str], dict[str, str]]:
+    """Map Sage/Payroll IDs and clock names to full names from Employee Details blocks."""
+    by_sage: dict[int, str] = {}
+    by_clock: dict[str, str] = {}
+    for r, row in enumerate(rows):
+        for c, cell in enumerate(row):
+            if _normalize_header(cell) != "payrollnumber":
+                continue
+            if c + 1 >= len(row):
+                continue
+            pay_no = _parse_int(row[c + 1])
+            if pay_no is None or pay_no == 0:
+                continue
+            full_name, clock_name = _block_names_near(rows, r)
+            if not full_name:
+                continue
+            by_sage[pay_no] = full_name
+            for sid in _sage_pay_ref_ids_in_block(rows, r):
+                by_sage[sid] = full_name
+            if clock_name:
+                by_clock[clock_name.upper()] = full_name
+    return by_sage, by_clock
+
+
+def parse_employee_display_names(file_obj: Any) -> tuple[dict[int, str], dict[str, str]]:
+    """Full names from contract file (ClockRite Employee Details layout)."""
+    df = _load_sheet(file_obj)
+    rows = [[_to_text(v) for v in rec] for rec in df.values.tolist()]
+    if not rows:
+        return {}, {}
+    return _parse_clockrite_display_names(rows)
+
+
 def _parse_clockrite_contract_report(rows: list[list[str]]) -> tuple[dict[int, float], dict[str, float]]:
     """
     Clockrite "Employee Details - Advanced" XLS: repeated blocks with label rows
@@ -383,27 +477,75 @@ def parse_contracted_hours(file_obj: Any) -> tuple[dict[int, float], dict[str, f
     return _parse_clockrite_contract_report(rows)
 
 
+def audit_contract_pay_id_coverage(
+    employee_rows: list[dict[str, Any]], contracted_file_obj: Any
+) -> list[dict[str, Any]]:
+    """Employees whose Pay ID does not appear in the contract export (Payroll Number / Sage Pay Ref)."""
+    contracted_file_obj.seek(0)
+    by_payroll, _ = parse_contracted_hours(contracted_file_obj)
+    missing: list[dict[str, Any]] = []
+    for row in employee_rows:
+        sage_no = int(row["SageNo"])
+        if sage_no not in by_payroll:
+            missing.append(
+                {
+                    "SageNo": sage_no,
+                    "Name": row.get("Name"),
+                    "Category": row.get("Category"),
+                }
+            )
+    return missing
+
+
+def _resolve_contracted_hours(
+    sage_no: int,
+    name_upper: str,
+    by_payroll: dict[int, float],
+    by_name: dict[str, float],
+    by_clock_name: dict[str, str],
+) -> tuple[float, str, str]:
+    """Return (contracted hours, ContractHourMatch, ContractMatchReason)."""
+    hit = by_payroll.get(sage_no)
+    if hit is not None:
+        return float(hit), "Yes", "Matched on Pay ID"
+    hit = by_name.get(name_upper)
+    if hit:
+        return float(hit), "Yes", "Matched on employee name"
+    full = by_clock_name.get(name_upper)
+    if full:
+        hit = by_name.get(full.upper())
+        if hit:
+            return float(hit), "Yes", "Matched on employee name (clock name lookup)"
+    return 0.0, "No", "Pay ID not in contract export"
+
+
 def calculate_payroll(employee_rows: list[dict[str, Any]], contracted_file_obj: Any) -> PayrollResult:
+    contracted_file_obj.seek(0)
     by_payroll, by_name = parse_contracted_hours(contracted_file_obj)
+    contracted_file_obj.seek(0)
+    by_sage_name, by_clock_name = parse_employee_display_names(contracted_file_obj)
 
     for row in employee_rows:
-        contracted = by_payroll.get(int(row["SageNo"]))
-        if contracted is None:
-            contracted = by_name.get(str(row["Name"]).upper(), 0.0)
-            row["ContractHourMatch"] = "Yes" if contracted else "No"
-            if row["ContractHourMatch"] == "No":
-                logger.debug(
-                    "Contract match miss: SageNo=%s Name=%s (no PayrollNumber/SagePayRef alias or name key)",
-                    row.get("SageNo"),
-                    row.get("Name"),
-                )
-        else:
-            row["ContractHourMatch"] = "Yes"
-        row["ContractedHours"] = float(contracted)
-        row["Overtime"] = max(
-            0.0,
-            float(row["TotalPaidHours"]) - float(row["ContractedHours"]),
+        name_upper = str(row["Name"]).upper()
+        contracted, match, reason = _resolve_contracted_hours(
+            int(row["SageNo"]), name_upper, by_payroll, by_name, by_clock_name
         )
+        row["ContractHourMatch"] = match
+        row["ContractMatchReason"] = reason
+        if match == "No":
+            logger.debug(
+                "Contract match miss: SageNo=%s Name=%s (%s)",
+                row.get("SageNo"),
+                row.get("Name"),
+                reason,
+            )
+        row["ContractedHours"] = contracted
+        row["Overtime"] = max(0.0, float(row["TotalPaidHours"]) - contracted)
+
+    for row in employee_rows:
+        full = by_sage_name.get(int(row["SageNo"])) or by_clock_name.get(str(row["Name"]).upper())
+        if full:
+            row["Name"] = full
 
     agency_rows = [r for r in employee_rows if str(r["Category"]).strip().upper() in AGENCY_CATEGORIES]
     gazebo_rows = [r for r in employee_rows if str(r["Category"]).strip().upper() not in AGENCY_CATEGORIES]

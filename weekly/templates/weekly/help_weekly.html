@@ -132,6 +132,7 @@
 			<tbody>
 				<tr><td>&ldquo;No processed data available&rdquo; when clicking Export</td><td>Upload and process the two files first.</td></tr>
 				<tr><td>Wrong people in the result</td><td>Check that <strong>Pay ID</strong> in the employee file matches <strong>Payroll number</strong> in the contract file.</td></tr>
+				<tr><td><strong>Contract match</strong> = <strong>No</strong></td><td>Usually the Pay ID is missing from the contract export (often new joiners held by HR). See the <a href="{% url 'weekly:case_study_detail' case_id='contract-match-no' %}">case study</a> &mdash; re-export Employee Details after HR releases the employee. Contact HR, then the Developer if the problem persists.</td></tr>
 				<tr><td>Numbers look off for one person</td><td>Check that ClockRite export type is the right one (see step 2). Re-export and try again.</td></tr>
 				<tr><td>Page isn&rsquo;t updating</td><td>Hard-refresh the browser (Cmd-Shift-R / Ctrl-Shift-R).</td></tr>
 				<tr><td>Can&rsquo;t sign in</td><td>Contact Utsav to reset the password.</td></tr>

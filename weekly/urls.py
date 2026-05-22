@@ -11,6 +11,8 @@ urlpatterns = [
 	path('dashboard/', views.dashboard, name='dashboard'),
 	path('dashboard/weekly-report/', views.weekly_report, name='weekly_report'),
 	path('dashboard/weekly-report/help/', views.weekly_help, name='weekly_help'),
+	path('dashboard/case-studies/', views.case_studies, name='case_studies'),
+	path('dashboard/case-studies/<slug:case_id>/', views.case_study_detail, name='case_study_detail'),
 	path('dashboard/monthly-report/', views.monthly_report, name='monthly_report'),
 	path(
 		'dashboard/employee-hour-contracts/',
