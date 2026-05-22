@@ -6,9 +6,17 @@ from io import BytesIO
 from typing import Any
 
 import pandas as pd
+from openpyxl.styles import Border, Side
 
 
 logger = logging.getLogger(__name__)
+
+_TABLE_BORDER = Border(
+    left=Side(style="thin"),
+    right=Side(style="thin"),
+    top=Side(style="thin"),
+    bottom=Side(style="thin"),
+)
 
 
 # ClockRite "Paid Hours (Inc Absence) Summary": Pay ID column B (0-based 1); annual
@@ -620,6 +628,13 @@ def _build_analysis_dataframe(all_df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _apply_table_border(ws, min_row: int, max_row: int, min_col: int, max_col: int) -> None:
+    """Apply thin borders to every cell in the given range (formatting only)."""
+    for r in range(min_row, max_row + 1):
+        for c in range(min_col, max_col + 1):
+            ws.cell(r, c).border = _TABLE_BORDER
+
+
 def _append_grand_total_row_openpyxl(ws, analysis_df: pd.DataFrame, start_row: int) -> int:
     """Write 'Grand total' and column sums. Returns one past the last row written."""
     if analysis_df.empty:
@@ -651,6 +666,25 @@ def _append_category_breakdown_block(ws, analysis_df: pd.DataFrame, start_row: i
     return _append_grand_total_row_openpyxl(ws, analysis_df, r)
 
 
+def _append_emp_agency_total_block(ws, emp_agency_df: pd.DataFrame, start_row: int) -> int:
+    """Write EMP / AGENCY / TOTAL summary below category block (cols B and D–H). Returns one past last row."""
+    if emp_agency_df.empty:
+        return start_row
+    r = start_row
+    ws.cell(r, _CATEGORY_COL, "Summary")
+    for i, h in enumerate(_CATEGORY_BAND_COLS):
+        ws.cell(r, _CATEGORY_NUM_START + i, h)
+    r += 1
+    for _, row in emp_agency_df.iterrows():
+        summary = row["Summary"]
+        ws.cell(r, _CATEGORY_COL, "" if pd.isna(summary) else str(summary))
+        for i, h in enumerate(_CATEGORY_BAND_COLS):
+            v = row[h]
+            ws.cell(r, _CATEGORY_NUM_START + i, 0.0 if pd.isna(v) else float(v))
+        r += 1
+    return r
+
+
 def build_excel_bytes(result: PayrollResult) -> bytes:
     all_df = pd.DataFrame(result.rows)
     agency_df = pd.DataFrame(result.agency_rows)
@@ -670,7 +704,15 @@ def build_excel_bytes(result: PayrollResult) -> bytes:
         if not analysis_df.empty:
             ws_all = writer.book["All Data"]
             all_data_start = int(ws_all.max_row) + 2
-            _append_category_breakdown_block(ws_all, analysis_df, all_data_start)
+            end_row = _append_category_breakdown_block(ws_all, analysis_df, all_data_start)
+            _apply_table_border(
+                ws_all,
+                all_data_start,
+                end_row - 1,
+                _CATEGORY_COL,
+                _CATEGORY_NUM_START + len(_CATEGORY_BAND_COLS) - 1,
+            )
+            _append_emp_agency_total_block(ws_all, emp_agency_df, end_row + 1)
 
             ws_an = writer.book["Analysis"]
             an_start = int(ws_an.max_row) + 2

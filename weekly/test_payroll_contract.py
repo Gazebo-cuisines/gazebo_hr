@@ -261,6 +261,15 @@ class BuildExcelNewSheetsTest(unittest.TestCase):
         grand_row = header_row + 4
         self.assertEqual(ws.cell(grand_row, 2).value, "Grand total")
         self.assertEqual(ws.cell(grand_row, 4).value, 20.0)
+        self.assertEqual(ws.cell(header_row, 2).border.left.style, "thin")
+
+        emp_agency_df = build_emp_agency_total_df(pr)
+        summary_header_row = grand_row + 2
+        self.assertEqual(ws.cell(summary_header_row, 2).value, "Summary")
+        for i, row in enumerate(emp_agency_df.itertuples(index=False)):
+            r = summary_header_row + 1 + i
+            self.assertEqual(ws.cell(r, 2).value, row.Summary)
+            self.assertEqual(ws.cell(r, 4).value, float(row.BasicHours))
         wb.close()
 
 
