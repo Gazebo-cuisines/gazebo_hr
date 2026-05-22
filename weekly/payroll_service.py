@@ -18,6 +18,11 @@ _CLOCKRITE_SAGE_HEADER_COL = 3
 _CLOCKRITE_ANNUAL_H_COL = 7
 _CLOCKRITE_ANNUAL_L_COL = 11
 
+# Appended category breakdown / grand total (matches monthly export layout).
+_CATEGORY_COL = 2
+_CATEGORY_NUM_START = 4
+_CATEGORY_BAND_COLS = ["BasicHours", "MonFriOvertime", "SatSunOvertime", "AnnualHoliday", "TotalPaidHours"]
+
 AGENCY_CATEGORIES = {
     "A-EL CLNR",
     "A-EL DPCH",
@@ -477,11 +482,10 @@ def _append_grand_total_row_openpyxl(ws, analysis_df: pd.DataFrame, start_row: i
     """Write 'Grand total' and column sums. Returns one past the last row written."""
     if analysis_df.empty:
         return start_row
-    num_cols = ["BasicHours", "MonFriOvertime", "SatSunOvertime", "AnnualHoliday", "TotalPaidHours"]
     r = start_row
-    ws.cell(r, 1, "Grand total")
-    for i, col in enumerate(num_cols, start=2):
-        ws.cell(r, i, float(analysis_df[col].sum()))
+    ws.cell(r, _CATEGORY_COL, "Grand total")
+    for i, col in enumerate(_CATEGORY_BAND_COLS):
+        ws.cell(r, _CATEGORY_NUM_START + i, float(analysis_df[col].sum()))
     return r + 1
 
 
@@ -489,18 +493,17 @@ def _append_category_breakdown_block(ws, analysis_df: pd.DataFrame, start_row: i
     """Write analysis headers, category rows, blank row, and grand total. Returns one past the last row."""
     if analysis_df.empty:
         return start_row
-    headers = list(analysis_df.columns)
     r = start_row
-    for c, h in enumerate(headers, start=1):
-        ws.cell(r, c, h)
+    ws.cell(r, _CATEGORY_COL, "Category")
+    for i, h in enumerate(_CATEGORY_BAND_COLS):
+        ws.cell(r, _CATEGORY_NUM_START + i, h)
     r += 1
     for _, row in analysis_df.iterrows():
-        for c, h in enumerate(headers, start=1):
+        cat = row["Category"]
+        ws.cell(r, _CATEGORY_COL, "" if pd.isna(cat) else str(cat))
+        for i, h in enumerate(_CATEGORY_BAND_COLS):
             v = row[h]
-            if h == "Category":
-                ws.cell(r, c, "" if pd.isna(v) else str(v))
-            else:
-                ws.cell(r, c, 0.0 if pd.isna(v) else float(v))
+            ws.cell(r, _CATEGORY_NUM_START + i, 0.0 if pd.isna(v) else float(v))
         r += 1
     r += 1
     return _append_grand_total_row_openpyxl(ws, analysis_df, r)
