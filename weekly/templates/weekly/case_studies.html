@@ -1,0 +1,181 @@
+{% extends "weekly/dashboard_base.html" %}
+{% block extra_head %}
+<style>
+.case-studies-page { max-width: 920px; }
+.case-studies-page h1 { color: #003078; }
+.case-studies-search {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	align-items: center;
+	margin-bottom: 1rem;
+}
+.case-studies-search input {
+	max-width: 22rem;
+}
+.case-studies-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem;
+	border-bottom: 2px solid #e6ecf5;
+	margin-bottom: 1.25rem;
+}
+.case-studies-tabs .nav-link {
+	border: 0;
+	border-radius: 6px 6px 0 0;
+	color: #003078;
+	font-weight: 600;
+	padding: 0.5rem 1rem;
+	text-decoration: none;
+	background: transparent;
+}
+.case-studies-tabs .nav-link:hover { background: #f1f4f8; }
+.case-studies-tabs .nav-link.active {
+	background: #003078;
+	color: #fff;
+}
+.case-study-card {
+	background: #fff;
+	border: 1px solid #e6ecf5;
+	border-radius: 8px;
+	padding: 1.25rem 1.5rem;
+}
+.case-study-card h2 {
+	color: #003078;
+	font-size: 1.25rem;
+	margin-top: 0;
+}
+.case-study-card h3 {
+	font-size: 1rem;
+	margin-top: 1.25rem;
+	color: #0b0c0c;
+}
+.case-study-card p,
+.case-study-card li { color: #0b0c0c; }
+.case-study-card ul { padding-left: 1.25rem; }
+.case-study-summary {
+	color: #505a5f;
+	margin-bottom: 1rem;
+}
+.case-study-callout {
+	background: #f1f4f8;
+	border-left: 4px solid #003078;
+	padding: 0.75rem 1rem;
+	border-radius: 6px;
+	margin: 1rem 0;
+}
+.case-study-contact {
+	background: #fff8e8;
+	border-left: 4px solid #f47738;
+	padding: 0.75rem 1rem;
+	border-radius: 6px;
+	margin-top: 1.25rem;
+}
+.case-study-item.is-hidden { display: none !important; }
+.case-studies-empty {
+	display: none;
+	color: #505a5f;
+	padding: 1rem 0;
+}
+.case-studies-empty.is-visible { display: block; }
+</style>
+{% endblock %}
+{% block dashboard_content %}
+<div class="case-studies-page">
+	<h1 class="heading-xl">{{ page_heading }}</h1>
+	<p class="lead">Real situations explained. Use search to filter topics. The weekly report logic is working as designed unless noted below.</p>
+
+	<div class="case-studies-search">
+		<label class="visually-hidden" for="case-studies-search-input">Search case studies</label>
+		<input type="search" class="form-control" id="case-studies-search-input" placeholder="Search case studies (e.g. contract, new employee, HR)…" autocomplete="off">
+		<button type="button" class="btn btn-outline-secondary btn-sm" id="case-studies-search-clear">Clear</button>
+	</div>
+
+	<nav class="case-studies-tabs" aria-label="Case study topics" id="case-studies-tabs">
+		{% for case in case_studies %}
+		<a
+			class="nav-link case-studies-tab{% if active_case.id == case.id %} active{% endif %}"
+			href="{% url 'weekly:case_studies' %}?case={{ case.id }}"
+			data-case-id="{{ case.id }}"
+			data-search-text="{{ case.title }} {{ case.tab_label }} {{ case.summary }} {% for t in case.tags %}{{ t }} {% endfor %}"
+		>{{ case.tab_label }}</a>
+		{% endfor %}
+	</nav>
+
+	<p class="case-studies-empty" id="case-studies-empty" role="status">No case studies match your search.</p>
+
+	{% for case in case_studies %}
+	<article
+		class="case-study-item case-study-card{% if active_case.id != case.id %} d-none{% endif %}"
+		id="case-{{ case.id }}"
+		data-case-id="{{ case.id }}"
+		data-search-text="{{ case.title }} {{ case.tab_label }} {{ case.summary }} {% for t in case.tags %}{{ t }} {% endfor %}{% for sec in case.sections %}{{ sec.heading }} {% for line in sec.body %}{{ line }} {% endfor %}{% endfor %}"
+	>
+		<h2>{{ case.title }}</h2>
+		<p class="case-study-summary">{{ case.summary }}</p>
+
+		<div class="case-study-callout">
+			<strong>Exception, not a bug.</strong> The current weekly report implementation is fine for normal use.
+			This page describes a known data-timing situation between the two ClockRite exports.
+		</div>
+
+		{% for sec in case.sections %}
+		<h3>{{ sec.heading }}</h3>
+		{% if sec.body|length == 1 %}
+		<p>{{ sec.body.0 }}</p>
+		{% else %}
+		<ul>
+			{% for line in sec.body %}
+			<li>{{ line }}</li>
+			{% endfor %}
+		</ul>
+		{% endif %}
+		{% endfor %}
+
+		<div class="case-study-contact">
+			<strong>If you have any problem after following the steps above:</strong>
+			contact <strong>HR</strong> first (employee setup and contract export), then the <strong>Developer</strong> if both exports contain the Pay ID but match still shows No.
+		</div>
+	</article>
+	{% endfor %}
+</div>
+
+<script>
+(function () {
+	var input = document.getElementById('case-studies-search-input');
+	var clearBtn = document.getElementById('case-studies-search-clear');
+	var emptyEl = document.getElementById('case-studies-empty');
+	var tabs = document.querySelectorAll('.case-studies-tab');
+	var items = document.querySelectorAll('.case-study-item');
+	if (!input) return;
+
+	function applySearch() {
+		var q = (input.value || '').trim().toLowerCase();
+		var anyVisible = false;
+		tabs.forEach(function (tab) {
+			var text = (tab.getAttribute('data-search-text') || '').toLowerCase();
+			var show = !q || text.indexOf(q) !== -1;
+			tab.classList.toggle('is-hidden', !show);
+			if (show) anyVisible = true;
+		});
+		items.forEach(function (item) {
+			var text = (item.getAttribute('data-search-text') || '').toLowerCase();
+			var show = !q || text.indexOf(q) !== -1;
+			item.classList.toggle('is-hidden', !show);
+			item.classList.toggle('d-none', !show);
+			if (show) anyVisible = true;
+		});
+		if (emptyEl) emptyEl.classList.toggle('is-visible', q.length > 0 && !anyVisible);
+	}
+
+	input.addEventListener('input', applySearch);
+	if (clearBtn) {
+		clearBtn.addEventListener('click', function () {
+			input.value = '';
+			applySearch();
+			input.focus();
+		});
+	}
+})();
+</script>
+{% endblock %}

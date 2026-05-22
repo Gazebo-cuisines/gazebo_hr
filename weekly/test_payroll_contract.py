@@ -10,10 +10,12 @@ from openpyxl import Workbook, load_workbook
 
 from .payroll_service import (
     PayrollResult,
+    audit_contract_pay_id_coverage,
     build_emp_agency_total_df,
     build_excel_bytes,
     calculate_payroll,
     parse_contracted_hours,
+    parse_employee_display_names,
     parse_employee_hours,
     total_paid_hours_from_rows,
 )
@@ -111,8 +113,49 @@ class SagePayRefContractAliasTest(unittest.TestCase):
         ]
         result = calculate_payroll(employees, buf)
         self.assertEqual(result.rows[0]["ContractHourMatch"], "Yes")
+        self.assertEqual(result.rows[0]["ContractMatchReason"], "Matched on Pay ID")
         self.assertEqual(result.rows[0]["ContractedHours"], 40.0)
         self.assertEqual(result.rows[0]["Overtime"], 5.0)
+
+
+class EmployeeDisplayNameLookupTest(unittest.TestCase):
+    def _sonal_patel_block_workbook(self) -> BytesIO:
+        wb = Workbook()
+        ws = wb.active
+        ws.cell(1, 1, 1344)
+        ws.cell(1, 2, "Sonal Patel EOLL")
+        ws.cell(2, 2, "Clock Name")
+        ws.cell(2, 3, "S PATEL EOLL")
+        ws.cell(3, 6, "Contract Hrs")
+        ws.cell(3, 7, 40.0)
+        ws.cell(4, 8, "Sage Pay Ref")
+        ws.cell(4, 9, 1528)
+        ws.cell(5, 6, "Payroll Number")
+        ws.cell(5, 7, 1344)
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf
+
+    def test_parse_display_names_maps_sage_and_clock(self) -> None:
+        buf = self._sonal_patel_block_workbook()
+        by_sage, by_clock = parse_employee_display_names(buf)
+        self.assertEqual(by_sage[1528], "Sonal Patel EOLL")
+        self.assertEqual(by_sage[1344], "Sonal Patel EOLL")
+        self.assertEqual(by_clock["S PATEL EOLL"], "Sonal Patel EOLL")
+
+    def test_calculate_payroll_replaces_clock_name_with_full_name(self) -> None:
+        buf = self._sonal_patel_block_workbook()
+        employees = [
+            {
+                "SageNo": 1528,
+                "Name": "S PATEL EOLL",
+                "Category": "TEST",
+                "TotalPaidHours": 45.0,
+            },
+        ]
+        result = calculate_payroll(employees, buf)
+        self.assertEqual(result.rows[0]["Name"], "Sonal Patel EOLL")
 
 
 class PayIdNetBasicTest(unittest.TestCase):
@@ -223,21 +266,67 @@ class BuildExcelNewSheetsTest(unittest.TestCase):
 
 _DATA = Path(__file__).resolve().parent.parent / "data"
 _TEST_DATA = _DATA / "TEST_DATA"
-_OVERTIME_TEST = _DATA / "ovettime_error_test_data" / "dgross_paysummary2 (3).xls"
+_OVERTIME_TEST_DIR = _DATA / "ovettime_error_test_data"
+_OVERTIME_EMPLOYEE = _OVERTIME_TEST_DIR / "dgross_paysummary2 (3).xls"
+_OVERTIME_CONTRACT = _OVERTIME_TEST_DIR / "demployees_2023 (1).xls"
 _CLOCKRITE = _DATA / "Employee contract hours - clockrite.xls"
 _EMPLOYEE = _DATA / "dgross_paysummary2.xls"
 
 
-@unittest.skipUnless(_OVERTIME_TEST.is_file(), "data/ovettime_error_test_data fixture not in repo")
+@unittest.skipUnless(
+    _OVERTIME_EMPLOYEE.is_file() and _OVERTIME_CONTRACT.is_file(),
+    "data/ovettime_error_test_data fixtures not in repo",
+)
 class ClockRiteOvertimeColumnRegressionTest(unittest.TestCase):
     def test_colleague_paysummary_747_and_579(self) -> None:
-        with _OVERTIME_TEST.open("rb") as f:
+        with _OVERTIME_EMPLOYEE.open("rb") as f:
             rows = {r["SageNo"]: r for r in parse_employee_hours(f)}
         self.assertEqual(rows[747]["MonFriOvertime"], 5.5)
         self.assertEqual(rows[747]["TotalPaidHours"], 46.75)
         self.assertEqual(rows[579]["MonFriOvertime"], 9.25)
         self.assertEqual(rows[579]["SatSunOvertime"], 8.5)
         self.assertEqual(rows[579]["TotalPaidHours"], 17.75)
+
+    def test_colleague_full_name_for_sage_1528(self) -> None:
+        with _OVERTIME_EMPLOYEE.open("rb") as ef, _OVERTIME_CONTRACT.open("rb") as cf:
+            employees = parse_employee_hours(ef)
+            result = calculate_payroll(employees, cf)
+        by_sage = {r["SageNo"]: r["Name"] for r in result.rows}
+        self.assertEqual(by_sage.get(1528), "Sonal Patel EOLL")
+
+
+@unittest.skipUnless(
+    _OVERTIME_EMPLOYEE.is_file() and _OVERTIME_CONTRACT.is_file(),
+    "data/ovettime_error_test_data fixtures not in repo",
+)
+class ContractMatchAuditTest(unittest.TestCase):
+    """Audit: Contract match No = Pay ID missing from contract export (not a parser bug)."""
+
+    _MISSING_PAY_IDS = {752, 1653, 1658, 1664, 1665}
+
+    def test_five_pay_ids_missing_from_contract_export(self) -> None:
+        with _OVERTIME_EMPLOYEE.open("rb") as ef, _OVERTIME_CONTRACT.open("rb") as cf:
+            employees = parse_employee_hours(ef)
+            missing = audit_contract_pay_id_coverage(employees, cf)
+        missing_ids = {m["SageNo"] for m in missing}
+        self.assertEqual(missing_ids, self._MISSING_PAY_IDS)
+
+    def test_no_match_rows_have_reason_and_201_of_206_yes(self) -> None:
+        with _OVERTIME_EMPLOYEE.open("rb") as ef, _OVERTIME_CONTRACT.open("rb") as cf:
+            result = calculate_payroll(parse_employee_hours(ef), cf)
+        no_rows = [r for r in result.rows if r["ContractHourMatch"] == "No"]
+        self.assertEqual(len(no_rows), 5)
+        self.assertEqual(sum(1 for r in result.rows if r["ContractHourMatch"] == "Yes"), 201)
+        for r in no_rows:
+            self.assertEqual(r["ContractMatchReason"], "Pay ID not in contract export")
+            self.assertIn(r["SageNo"], self._MISSING_PAY_IDS)
+
+    def test_after_contract_reexport_expect_yes_for_missing_ids(self) -> None:
+        """Manual: re-export demployees from ClockRite with Pay IDs 752, 1653, 1658, 1664, 1665, then re-run this test."""
+        self.assertTrue(
+            _OVERTIME_CONTRACT.is_file(),
+            "Re-export Employee Details (Advanced) .xls after adding missing staff in ClockRite",
+        )
 
 
 @unittest.skipUnless(

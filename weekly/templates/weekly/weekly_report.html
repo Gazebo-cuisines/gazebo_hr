@@ -121,7 +121,7 @@
 					<li class="mb-2">You upload <strong>two</strong> spreadsheets: the <strong>employee hours</strong> file (from payroll / time) and the <strong>contract hours</strong> file (from HR / Clockrite, or a simple table if you use that format).</li>
 					<li class="mb-2">The app reads the employee file and builds one row per person, using <strong>Pay ID</strong> (same as <strong>Sage number</strong> / SageNo in the report).</li>
 					<li class="mb-2">It reads the contract file and finds each person&rsquo;s <strong>Payroll number</strong> and <strong>Contract hours</strong> (or columns in a single header row if you use a flat table export).</li>
-					<li class="mb-2">It <strong>joins</strong> the two: <code>Pay ID = Payroll number</code>. If no payroll number is found, it may fall back to matching on <strong>name</strong> (check <strong>Contract match</strong> in the output).</li>
+					<li class="mb-2">It <strong>joins</strong> the two: <code>Pay ID = Payroll number</code>. If no payroll number is found, it may fall back to matching on <strong>name</strong> (check <strong>Contract match</strong> in the output). If match is <strong>No</strong>, see <a href="{% url 'weekly:case_studies' %}?case=contract-match-no">Case studies: Contract hours not matching</a>.</li>
 					<li class="mb-2">It calculates <strong>Overtime</strong> = total paid hours minus contracted hours, and splits employees into <strong>agency</strong> vs <strong>Gazebo</strong> categories for analysis.</li>
 					<li class="mb-0">You can <strong>Download Excel</strong> for a full workbook (all data, not only the on-screen preview).</li>
 				</ol>
@@ -181,7 +181,7 @@
 					<label class="form-label mb-0" for="id_employee_file">Paid Hour (Incl. Absence) Summary</label>
 					<button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#helpEmployeeModal">Help</button>
 				</div>
-				<p class="form-text" id="hint-employee">Upload a payroll or time export; it must include <strong>Pay ID</strong>. Open <strong>Help</strong> above for a full walkthrough.</p>
+				<p class="form-text" id="hint-employee">Upload file named dgross_paysummary2.xls from ClockRite software.</p>
 				<div class="d-flex flex-row flex-wrap flex-md-nowrap gap-2 align-items-center weekly-file-field w-100">
 					<input id="id_employee_file" class="form-control weekly-file-field__chooser" type="file" name="employee_file" accept=".xls,.xlsx" required aria-describedby="hint-employee weekly-filename-employee">
 					<span class="weekly-filename-hint text-truncate flex-grow-1 min-w-0" id="weekly-filename-employee" aria-live="polite">No file chosen</span>
@@ -194,7 +194,7 @@
 					<label class="form-label mb-0" for="id_contracted_file">Employee Details (Advanced)</label>
 					<button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#helpContractModal">Help</button>
 				</div>
-				<p class="form-text" id="hint-contract">Upload your Clockrite or HR contract-hours export. <strong>Payroll number</strong> must match the Pay ID in the employee file.</p>
+				<p class="form-text" id="hint-contract">Upload file named demployees_2023.xls from ClockRite software.</p>
 				<div class="d-flex flex-row flex-wrap flex-md-nowrap gap-2 align-items-center weekly-file-field w-100">
 					<input id="id_contracted_file" class="form-control weekly-file-field__chooser" type="file" name="contracted_file" accept=".xls,.xlsx" required aria-describedby="hint-contract weekly-filename-contract">
 					<span class="weekly-filename-hint text-truncate flex-grow-1 min-w-0" id="weekly-filename-contract" aria-live="polite">No file chosen</span>
@@ -393,6 +393,8 @@
 						<th scope="col">TotalPaidHours</th>
 						<th scope="col">ContractedHours</th>
 						<th scope="col">Overtime</th>
+						<th scope="col">Contract match</th>
+						<th scope="col">Match reason</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -408,6 +410,8 @@
 						<td>{{ row.TotalPaidHours }}</td>
 						<td>{{ row.ContractedHours }}</td>
 						<td>{{ row.Overtime }}</td>
+						<td>{{ row.ContractHourMatch }}</td>
+						<td>{{ row.ContractMatchReason }}</td>
 					</tr>
 					{% endfor %}
 				</tbody>

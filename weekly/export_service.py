@@ -44,6 +44,8 @@ EXPORT_COLUMNS = [
     "TotalPaidHours",
     "ContractedHours",
     "Overtime",
+    "ContractHourMatch",
+    "ContractMatchReason",
 ]
 
 
