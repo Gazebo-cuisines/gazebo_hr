@@ -6,10 +6,15 @@ import zipfile
 from io import BytesIO
 from pathlib import Path
 
+import pandas as pd
 from openpyxl import Workbook, load_workbook
 
 from .payroll_service import (
     PayrollResult,
+    _OVERALL_CATEGORY_ORDER,
+    _build_analysis_dataframe,
+    _build_grouped_analysis_dataframe,
+    _build_overall_analysis_dataframe,
     audit_contract_pay_id_coverage,
     build_emp_agency_total_df,
     build_excel_bytes,
@@ -248,12 +253,15 @@ class BuildExcelNewSheetsTest(unittest.TestCase):
         data = build_excel_bytes(pr)
         wb = load_workbook(BytesIO(data), read_only=True)
         ws = wb["All Data"]
-        header_row = None
-        for r in range(1, ws.max_row + 1):
-            if ws.cell(r, 2).value == "Category":
-                header_row = r
-                break
-        self.assertIsNotNone(header_row)
+        self.assertEqual(ws.cell(len(rows) + 3, 2).value, "Category breakdown (detailed)")
+        first_tier_row = len(rows) + 4
+        tier_headers = [
+            r
+            for r in range(first_tier_row, ws.max_row + 1)
+            if ws.cell(r, 2).value == "Category" and ws.cell(r, 4).value == "BasicHours"
+        ]
+        self.assertEqual(len(tier_headers), 3)
+        header_row = tier_headers[0]
         self.assertIsNone(ws.cell(header_row, 1).value)
         self.assertEqual(ws.cell(header_row, 2).value, "Category")
         self.assertEqual(ws.cell(header_row, 4).value, "BasicHours")
@@ -263,14 +271,48 @@ class BuildExcelNewSheetsTest(unittest.TestCase):
         self.assertEqual(ws.cell(grand_row, 4).value, 20.0)
         self.assertEqual(ws.cell(header_row, 2).border.left.style, "thin")
 
+        grouped_header_row = tier_headers[1]
+        self.assertEqual(ws.cell(grouped_header_row + 1, 2).value, "CLNR")
+
         emp_agency_df = build_emp_agency_total_df(pr)
-        summary_header_row = grand_row + 2
+        self.assertEqual(ws.cell(grouped_header_row + 4, 2).value, "EMP / Agency totals")
+        summary_header_row = grouped_header_row + 5
         self.assertEqual(ws.cell(summary_header_row, 2).value, "Summary")
         for i, row in enumerate(emp_agency_df.itertuples(index=False)):
             r = summary_header_row + 1 + i
             self.assertEqual(ws.cell(r, 2).value, row.Summary)
             self.assertEqual(ws.cell(r, 4).value, float(row.BasicHours))
+
+        grand_tot_row = None
+        for r in range(1, ws.max_row + 1):
+            if ws.cell(r, 2).value == "GRAND TOTAL":
+                grand_tot_row = r
+                break
+        self.assertIsNotNone(grand_tot_row)
+        self.assertGreater(grand_tot_row, summary_header_row)
+        self.assertEqual(ws.cell(grand_tot_row, 8).value, 32.0)
         wb.close()
+
+    def test_all_data_rollup_totals_match(self) -> None:
+        band = {
+            "BasicHours": 10.0,
+            "MonFriOvertime": 1.0,
+            "SatSunOvertime": 2.0,
+            "AnnualHoliday": 3.0,
+            "TotalPaidHours": 16.0,
+        }
+        rows = [
+            {**band, "Name": "A", "Category": "PROD BELT", "SageNo": 1, "ContractedHours": 0.0, "Overtime": 0.0, "ContractHourMatch": "No"},
+            {**band, "Name": "B", "Category": "PKNG HIGH_RISK", "SageNo": 2, "ContractedHours": 0.0, "Overtime": 0.0, "ContractHourMatch": "No"},
+        ]
+        analysis = _build_analysis_dataframe(pd.DataFrame(rows))
+        grouped = _build_grouped_analysis_dataframe(analysis)
+        overall = _build_overall_analysis_dataframe(analysis)
+        self.assertEqual(len(grouped), 2)
+        self.assertEqual(list(overall["Category"]), list(_OVERALL_CATEGORY_ORDER))
+        self.assertEqual(float(overall["TotalPaidHours"].sum()), 32.0)
+        self.assertEqual(float(overall.loc[overall["Category"] == "PROD", "TotalPaidHours"].iloc[0]), 16.0)
+        self.assertEqual(float(overall.loc[overall["Category"] == "PACK", "TotalPaidHours"].iloc[0]), 16.0)
 
 
 _DATA = Path(__file__).resolve().parent.parent / "data"
@@ -280,6 +322,41 @@ _OVERTIME_EMPLOYEE = _OVERTIME_TEST_DIR / "dgross_paysummary2 (3).xls"
 _OVERTIME_CONTRACT = _OVERTIME_TEST_DIR / "demployees_2023 (1).xls"
 _CLOCKRITE = _DATA / "Employee contract hours - clockrite.xls"
 _EMPLOYEE = _DATA / "dgross_paysummary2.xls"
+
+
+@unittest.skipUnless(
+    _OVERTIME_EMPLOYEE.is_file() and _OVERTIME_CONTRACT.is_file(),
+    "data/ovettime_error_test_data fixtures not in repo",
+)
+class AllDataMultiTierIntegrationTest(unittest.TestCase):
+    def test_grouped_and_overall_rollups_on_fixture(self) -> None:
+        with _OVERTIME_EMPLOYEE.open("rb") as ef, _OVERTIME_CONTRACT.open("rb") as cf:
+            result = calculate_payroll(parse_employee_hours(ef), cf)
+        analysis = _build_analysis_dataframe(pd.DataFrame(result.rows))
+        grouped = _build_grouped_analysis_dataframe(analysis)
+        overall = _build_overall_analysis_dataframe(analysis)
+        self.assertEqual(len(analysis), 26)
+        self.assertEqual(len(grouped), 16)
+        granular_total = float(analysis["TotalPaidHours"].sum())
+        self.assertEqual(float(grouped["TotalPaidHours"].sum()), granular_total)
+        self.assertEqual(float(overall["TotalPaidHours"].sum()), granular_total)
+        self.assertEqual(list(overall["Category"]), list(_OVERALL_CATEGORY_ORDER))
+
+        data = build_excel_bytes(result)
+        wb = load_workbook(BytesIO(data), read_only=True)
+        ws = wb["All Data"]
+        first_tier_row = len(result.rows) + 4
+        tier_headers = [
+            r
+            for r in range(first_tier_row, ws.max_row + 1)
+            if ws.cell(r, 2).value == "Category" and ws.cell(r, 4).value == "BasicHours"
+        ]
+        self.assertEqual(len(tier_headers), 3)
+        grand_tot_row = next(
+            r for r in range(1, ws.max_row + 1) if ws.cell(r, 2).value == "GRAND TOTAL"
+        )
+        self.assertEqual(ws.cell(grand_tot_row, 8).value, granular_total)
+        wb.close()
 
 
 @unittest.skipUnless(

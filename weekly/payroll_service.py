@@ -628,6 +628,68 @@ def _build_analysis_dataframe(all_df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+_OVERALL_CATEGORY_ORDER = ("PROD", "PACK", "WRHS", "CLNR", "TECH", "OFFICE")
+
+
+def _overall_category_key(category: str) -> str:
+    c = str(category).strip().upper()
+    if "PKNG" in c:
+        return "PACK"
+    if "PROD" in c:
+        return "PROD"
+    if "WRHS" in c:
+        return "WRHS"
+    if "CLNR" in c:
+        return "CLNR"
+    if "TECH" in c:
+        return "TECH"
+    if c in ("OFCE", "DPCH") or "DPCH" in c:
+        return "OFFICE"
+    return "OTHER"
+
+
+def _build_grouped_analysis_dataframe(analysis_df: pd.DataFrame) -> pd.DataFrame:
+    from .monthly_service import _grouped_key
+
+    if analysis_df.empty:
+        return pd.DataFrame(columns=["Category", *_CATEGORY_BAND_COLS])
+    grouped: dict[str, dict[str, float]] = {}
+    for _, row in analysis_df.iterrows():
+        k = _grouped_key(str(row["Category"]))
+        if k not in grouped:
+            grouped[k] = {c: 0.0 for c in _CATEGORY_BAND_COLS}
+        for c in _CATEGORY_BAND_COLS:
+            grouped[k][c] += float(row[c] or 0.0)
+    return pd.DataFrame([{"Category": k, **grouped[k]} for k in sorted(grouped)])
+
+
+def _build_overall_analysis_dataframe(analysis_df: pd.DataFrame) -> pd.DataFrame:
+    if analysis_df.empty:
+        return pd.DataFrame(columns=["Category", *_CATEGORY_BAND_COLS])
+    buckets = {k: {c: 0.0 for c in _CATEGORY_BAND_COLS} for k in _OVERALL_CATEGORY_ORDER}
+    for _, row in analysis_df.iterrows():
+        b = _overall_category_key(str(row["Category"]))
+        if b not in buckets:
+            buckets[b] = {c: 0.0 for c in _CATEGORY_BAND_COLS}
+        for c in _CATEGORY_BAND_COLS:
+            buckets[b][c] += float(row[c] or 0.0)
+    return pd.DataFrame([{"Category": k, **buckets[k]} for k in _OVERALL_CATEGORY_ORDER])
+
+
+_ALL_DATA_SECTION_TITLES = (
+    "Category breakdown (detailed)",
+    "Category breakdown (grouped)",
+    "EMP / Agency totals",
+    "Category breakdown (overall)",
+)
+
+
+def _append_section_title(ws, start_row: int, title: str) -> int:
+    """Write a section label in col B. Returns the next row for the table header."""
+    ws.cell(start_row, _CATEGORY_COL, title)
+    return start_row + 1
+
+
 def _apply_table_border(ws, min_row: int, max_row: int, min_col: int, max_col: int) -> None:
     """Apply thin borders to every cell in the given range (formatting only)."""
     for r in range(min_row, max_row + 1):
@@ -635,35 +697,55 @@ def _apply_table_border(ws, min_row: int, max_row: int, min_col: int, max_col: i
             ws.cell(r, c).border = _TABLE_BORDER
 
 
-def _append_grand_total_row_openpyxl(ws, analysis_df: pd.DataFrame, start_row: int) -> int:
-    """Write 'Grand total' and column sums. Returns one past the last row written."""
-    if analysis_df.empty:
+def _append_grand_total_row_openpyxl(
+    ws,
+    totals_df: pd.DataFrame,
+    start_row: int,
+    *,
+    label: str = "Grand total",
+) -> int:
+    """Write total label and column sums. Returns one past the last row written."""
+    if totals_df.empty:
         return start_row
     r = start_row
-    ws.cell(r, _CATEGORY_COL, "Grand total")
+    ws.cell(r, _CATEGORY_COL, label)
     for i, col in enumerate(_CATEGORY_BAND_COLS):
-        ws.cell(r, _CATEGORY_NUM_START + i, float(analysis_df[col].sum()))
+        ws.cell(r, _CATEGORY_NUM_START + i, float(totals_df[col].sum()))
     return r + 1
 
 
-def _append_category_breakdown_block(ws, analysis_df: pd.DataFrame, start_row: int) -> int:
-    """Write analysis headers, category rows, blank row, and grand total. Returns one past the last row."""
-    if analysis_df.empty:
+def _append_hour_totals_block(
+    ws,
+    totals_df: pd.DataFrame,
+    start_row: int,
+    *,
+    header_label: str = "Category",
+    grand_label: str | None = "Grand total",
+) -> int:
+    """Write category/hour band table (cols B and D–H). Returns one past the last row."""
+    if totals_df.empty:
         return start_row
     r = start_row
-    ws.cell(r, _CATEGORY_COL, "Category")
+    ws.cell(r, _CATEGORY_COL, header_label)
     for i, h in enumerate(_CATEGORY_BAND_COLS):
         ws.cell(r, _CATEGORY_NUM_START + i, h)
     r += 1
-    for _, row in analysis_df.iterrows():
+    for _, row in totals_df.iterrows():
         cat = row["Category"]
         ws.cell(r, _CATEGORY_COL, "" if pd.isna(cat) else str(cat))
         for i, h in enumerate(_CATEGORY_BAND_COLS):
             v = row[h]
             ws.cell(r, _CATEGORY_NUM_START + i, 0.0 if pd.isna(v) else float(v))
         r += 1
-    r += 1
-    return _append_grand_total_row_openpyxl(ws, analysis_df, r)
+    if grand_label:
+        r += 1
+        return _append_grand_total_row_openpyxl(ws, totals_df, r, label=grand_label)
+    return r
+
+
+def _append_category_breakdown_block(ws, analysis_df: pd.DataFrame, start_row: int) -> int:
+    """Granular category breakdown with grand total (tier 1)."""
+    return _append_hour_totals_block(ws, analysis_df, start_row, grand_label="Grand total")
 
 
 def _append_emp_agency_total_block(ws, emp_agency_df: pd.DataFrame, start_row: int) -> int:
@@ -703,16 +785,34 @@ def build_excel_bytes(result: PayrollResult) -> bytes:
 
         if not analysis_df.empty:
             ws_all = writer.book["All Data"]
-            all_data_start = int(ws_all.max_row) + 2
-            end_row = _append_category_breakdown_block(ws_all, analysis_df, all_data_start)
-            _apply_table_border(
-                ws_all,
-                all_data_start,
-                end_row - 1,
-                _CATEGORY_COL,
-                _CATEGORY_NUM_START + len(_CATEGORY_BAND_COLS) - 1,
-            )
-            _append_emp_agency_total_block(ws_all, emp_agency_df, end_row + 1)
+            border_max_col = _CATEGORY_NUM_START + len(_CATEGORY_BAND_COLS) - 1
+            r = int(ws_all.max_row) + 2
+            tier_titles = _ALL_DATA_SECTION_TITLES
+
+            r = _append_section_title(ws_all, r, tier_titles[0])
+            table_start = r
+            end_row = _append_category_breakdown_block(ws_all, analysis_df, r)
+            _apply_table_border(ws_all, table_start, end_row - 1, _CATEGORY_COL, border_max_col)
+            r = end_row + 1
+
+            grouped_df = _build_grouped_analysis_dataframe(analysis_df)
+            r = _append_section_title(ws_all, r, tier_titles[1])
+            table_start = r
+            end_row = _append_hour_totals_block(ws_all, grouped_df, r, grand_label=None)
+            _apply_table_border(ws_all, table_start, end_row - 1, _CATEGORY_COL, border_max_col)
+            r = end_row + 1
+
+            r = _append_section_title(ws_all, r, tier_titles[2])
+            table_start = r
+            end_row = _append_emp_agency_total_block(ws_all, emp_agency_df, r)
+            _apply_table_border(ws_all, table_start, end_row - 1, _CATEGORY_COL, border_max_col)
+            r = end_row + 1
+
+            overall_df = _build_overall_analysis_dataframe(analysis_df)
+            r = _append_section_title(ws_all, r, tier_titles[3])
+            table_start = r
+            end_row = _append_hour_totals_block(ws_all, overall_df, r, grand_label="GRAND TOTAL")
+            _apply_table_border(ws_all, table_start, end_row - 1, _CATEGORY_COL, border_max_col)
 
             ws_an = writer.book["Analysis"]
             an_start = int(ws_an.max_row) + 2
