@@ -83,6 +83,13 @@
 }
 .weekly-charts-section { display: none; }
 .weekly-charts-section.is-open { display: block; }
+.weekly-file-field .weekly-file-field__chooser { min-width: 0; flex: 0 1 16rem; }
+.weekly-file-field .weekly-filename-hint {
+	font-size: 0.8125rem;
+	color: var(--bs-secondary-color, #6c757d);
+	max-width: 100%;
+}
+
 @media (max-width: 575.98px) {
 	.results-toolbar { padding: 0.75rem; }
 	.weekly-data-card .table-responsive { max-height: 70vh; }
@@ -159,6 +166,8 @@
 				</ol>
 				<p class="mb-0">Use that exported file here as <strong>Employee Contract hours excel file</strong>.</p>
 			</div>
+
+			
 		</div>
 	</div>
 </div>
@@ -173,7 +182,12 @@
 					<button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#helpEmployeeModal">Help</button>
 				</div>
 				<p class="form-text" id="hint-employee">Upload a payroll or time export; it must include <strong>Pay ID</strong>. Open <strong>Help</strong> above for a full walkthrough.</p>
-				<input id="id_employee_file" class="form-control" type="file" name="employee_file" accept=".xls,.xlsx" required aria-describedby="hint-employee">
+				<div class="d-flex flex-row flex-wrap flex-md-nowrap gap-2 align-items-center weekly-file-field w-100">
+					<input id="id_employee_file" class="form-control weekly-file-field__chooser" type="file" name="employee_file" accept=".xls,.xlsx" required aria-describedby="hint-employee weekly-filename-employee">
+					<span class="weekly-filename-hint text-truncate flex-grow-1 min-w-0" id="weekly-filename-employee" aria-live="polite">No file chosen</span>
+					<button type="button" class="btn btn-outline-secondary flex-shrink-0 align-self-auto"
+						id="btn-clear-employee-file" aria-controls="id_employee_file">Clear file</button>
+				</div>
 			</div>
 			<div class="mb-3">
 				<div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
@@ -181,7 +195,12 @@
 					<button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#helpContractModal">Help</button>
 				</div>
 				<p class="form-text" id="hint-contract">Upload your Clockrite or HR contract-hours export. <strong>Payroll number</strong> must match the Pay ID in the employee file.</p>
-				<input id="id_contracted_file" class="form-control" type="file" name="contracted_file" accept=".xls,.xlsx" required aria-describedby="hint-contract">
+				<div class="d-flex flex-row flex-wrap flex-md-nowrap gap-2 align-items-center weekly-file-field w-100">
+					<input id="id_contracted_file" class="form-control weekly-file-field__chooser" type="file" name="contracted_file" accept=".xls,.xlsx" required aria-describedby="hint-contract weekly-filename-contract">
+					<span class="weekly-filename-hint text-truncate flex-grow-1 min-w-0" id="weekly-filename-contract" aria-live="polite">No file chosen</span>
+					<button type="button" class="btn btn-outline-secondary flex-shrink-0 align-self-auto"
+						id="btn-clear-contract-file" aria-controls="id_contracted_file">Clear file</button>
+				</div>
 			</div>
 			<div class="d-flex flex-wrap gap-2 align-items-center">
 				{% include "weekly/components/button_submit.html" with label="Process files" variant="primary" id="btn-process-files" %}
@@ -415,13 +434,64 @@
 
 	var form = document.getElementById('weekly-upload-form');
 	var overlay = document.getElementById('weekly-processing-overlay');
+	function syncWeeklyFileHint(inputEl, hintEl) {
+		if (!hintEl) return;
+		var file = inputEl && inputEl.files && inputEl.files[0];
+		hintEl.textContent = file ? file.name : 'No file chosen';
+	}
+	function clearWeeklyFile(inputEl, hintEl) {
+		if (!inputEl) return;
+		inputEl.value = '';
+		syncWeeklyFileHint(inputEl, hintEl);
+		inputEl.focus();
+	}
+
+	var inpEmployee = document.getElementById('id_employee_file');
+	var inpContract = document.getElementById('id_contracted_file');
+	var hintEmployee = document.getElementById('weekly-filename-employee');
+	var hintContract = document.getElementById('weekly-filename-contract');
+	var btnClearEmployee = document.getElementById('btn-clear-employee-file');
+	var btnClearContract = document.getElementById('btn-clear-contract-file');
+	if (inpEmployee) {
+		inpEmployee.addEventListener('change', function () {
+			syncWeeklyFileHint(inpEmployee, hintEmployee);
+		});
+	}
+	if (inpContract) {
+		inpContract.addEventListener('change', function () {
+			syncWeeklyFileHint(inpContract, hintContract);
+		});
+	}
+	if (inpEmployee && btnClearEmployee && hintEmployee) {
+		btnClearEmployee.addEventListener('click', function () {
+			clearWeeklyFile(inpEmployee, hintEmployee);
+		});
+	}
+	if (inpContract && btnClearContract && hintContract) {
+		btnClearContract.addEventListener('click', function () {
+			clearWeeklyFile(inpContract, hintContract);
+		});
+	}
+
 	if (form) {
 		var btnProcess = document.getElementById('btn-process-files');
-		form.addEventListener('submit', function () {
+		form.addEventListener('submit', function (e) {
+			if (!form.reportValidity()) {
+				e.preventDefault();
+				return;
+			}
 			if (!btnProcess || btnProcess.disabled) return;
 			btnProcess.disabled = true;
-			if (!btnProcess.getAttribute('data-orig')) btnProcess.setAttribute('data-orig', btnProcess.textContent);
-			btnProcess.textContent = 'Processing…';
+			if (!btnProcess.getAttribute('data-orig')) {
+				btnProcess.setAttribute('data-orig', (btnProcess.textContent || '').trim());
+			}
+			btnProcess.innerHTML = '';
+			var spin = document.createElement('span');
+			spin.className = 'spinner-border spinner-border-sm me-2';
+			spin.setAttribute('role', 'status');
+			spin.setAttribute('aria-hidden', 'true');
+			btnProcess.appendChild(spin);
+			btnProcess.appendChild(document.createTextNode('Processing…'));
 			if (overlay) {
 				overlay.classList.add('is-active');
 				overlay.setAttribute('aria-hidden', 'false');
@@ -432,6 +502,12 @@
 		if (overlay) {
 			overlay.classList.remove('is-active');
 			overlay.setAttribute('aria-hidden', 'true');
+		}
+		var btnProcess = document.getElementById('btn-process-files');
+		if (btnProcess) {
+			btnProcess.disabled = false;
+			var orig = btnProcess.getAttribute('data-orig');
+			if (orig) btnProcess.textContent = orig;
 		}
 	});
 
