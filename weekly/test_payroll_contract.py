@@ -6,7 +6,7 @@ import zipfile
 from io import BytesIO
 from pathlib import Path
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from .payroll_service import (
     PayrollResult,
@@ -188,6 +188,37 @@ class BuildExcelNewSheetsTest(unittest.TestCase):
             wbxml = zf.read("xl/workbook.xml").decode("utf-8")
         for name in ("EMP Agency Total", "Category summary", "Hours over 60"):
             self.assertIn(name, wbxml, msg=f"missing sheet {name!r}")
+
+    def test_category_breakdown_block_column_offset(self) -> None:
+        band = {
+            "BasicHours": 10.0,
+            "MonFriOvertime": 1.0,
+            "SatSunOvertime": 2.0,
+            "AnnualHoliday": 3.0,
+            "TotalPaidHours": 16.0,
+        }
+        rows = [
+            {**band, "Name": "A ONE", "Category": "CLNR", "SageNo": 1, "ContractedHours": 0.0, "Overtime": 0.0, "ContractHourMatch": "No"},
+            {**band, "Name": "B TWO", "Category": "OFCE", "SageNo": 2, "ContractedHours": 0.0, "Overtime": 0.0, "ContractHourMatch": "No"},
+        ]
+        pr = PayrollResult(rows=rows, agency_rows=[], gazebo_rows=rows, total_paid_hours=32.0)
+        data = build_excel_bytes(pr)
+        wb = load_workbook(BytesIO(data), read_only=True)
+        ws = wb["All Data"]
+        header_row = None
+        for r in range(1, ws.max_row + 1):
+            if ws.cell(r, 2).value == "Category":
+                header_row = r
+                break
+        self.assertIsNotNone(header_row)
+        self.assertIsNone(ws.cell(header_row, 1).value)
+        self.assertEqual(ws.cell(header_row, 2).value, "Category")
+        self.assertEqual(ws.cell(header_row, 4).value, "BasicHours")
+        self.assertIsNone(ws.cell(header_row, 3).value)
+        grand_row = header_row + 4
+        self.assertEqual(ws.cell(grand_row, 2).value, "Grand total")
+        self.assertEqual(ws.cell(grand_row, 4).value, 20.0)
+        wb.close()
 
 
 _DATA = Path(__file__).resolve().parent.parent / "data"
