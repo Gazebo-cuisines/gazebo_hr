@@ -15,6 +15,7 @@ from .payroll_service import (
     _build_analysis_dataframe,
     _build_grouped_analysis_dataframe,
     _build_overall_analysis_dataframe,
+    _overall_category_key,
     audit_contract_pay_id_coverage,
     build_emp_agency_total_df,
     build_excel_bytes,
@@ -318,6 +319,32 @@ class BuildExcelNewSheetsTest(unittest.TestCase):
         self.assertEqual(float(overall["TotalPaidHours"].sum()), 32.0)
         self.assertEqual(float(overall.loc[overall["Category"] == "PROD", "TotalPaidHours"].iloc[0]), 16.0)
         self.assertEqual(float(overall.loc[overall["Category"] == "PACK", "TotalPaidHours"].iloc[0]), 16.0)
+
+    def test_overall_category_key_pack_includes_dpch(self) -> None:
+        self.assertEqual(_overall_category_key("DPCH"), "PACK")
+        self.assertEqual(_overall_category_key("A-EL DPCH"), "PACK")
+        self.assertEqual(_overall_category_key("PKNG HIGH_RISK"), "PACK")
+        self.assertEqual(_overall_category_key("A-EL PKNG SLEEVING"), "PACK")
+        self.assertEqual(_overall_category_key("A-PM PKNG HIGH_RISK"), "PACK")
+        self.assertEqual(_overall_category_key("A-RS PKNG SLEEVING"), "PACK")
+        self.assertEqual(_overall_category_key("TECH TECHNICAL"), "TECH")
+        self.assertEqual(_overall_category_key("A-EL TECHNICAL"), "TECH")
+        self.assertEqual(_overall_category_key("OFCE"), "OFFICE")
+
+    def test_overall_dpch_hours_roll_into_pack_on_fixture(self) -> None:
+        with _OVERTIME_EMPLOYEE.open("rb") as ef, _OVERTIME_CONTRACT.open("rb") as cf:
+            result = calculate_payroll(parse_employee_hours(ef), cf)
+        analysis = _build_analysis_dataframe(pd.DataFrame(result.rows))
+        overall = _build_overall_analysis_dataframe(analysis)
+        dpch_hours = float(
+            analysis.loc[analysis["Category"].isin(["DPCH", "A-EL DPCH"]), "TotalPaidHours"].sum()
+        )
+        ofce_hours = float(analysis.loc[analysis["Category"] == "OFCE", "TotalPaidHours"].sum())
+        pack_hours = float(overall.loc[overall["Category"] == "PACK", "TotalPaidHours"].iloc[0])
+        office_hours = float(overall.loc[overall["Category"] == "OFFICE", "TotalPaidHours"].iloc[0])
+        self.assertGreater(dpch_hours, 0.0)
+        self.assertAlmostEqual(office_hours, ofce_hours, places=2)
+        self.assertGreaterEqual(pack_hours, dpch_hours)
 
 
 _DATA = Path(__file__).resolve().parent.parent / "data"
