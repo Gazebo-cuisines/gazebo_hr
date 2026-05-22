@@ -4,7 +4,12 @@ from dataclasses import asdict, dataclass, field
 from io import BytesIO
 from typing import Any
 
+import pandas as pd
 from openpyxl import Workbook
+
+
+_BAND_KEYS = ("BasicHours", "MonFriOvertime", "SatSunOvertime", "AnnualHoliday", "TotalPaidHours")
+_EMP_AGENCY_ROWS = ("EMP", "AGENCY", "TOTAL")
 
 
 @dataclass
@@ -46,6 +51,7 @@ class MonthlyWeekSummary:
     end_date: str = ""
     non_agency_total: float = 0.0
     grouped_totals: dict[str, MonthlyEmployeeTotal] = field(default_factory=dict)
+    emp_agency_bands: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 def _to_text(value: Any) -> str:
@@ -82,6 +88,131 @@ def _grouped_key(category: str) -> str:
     if category.startswith("A-") and len(category) >= 9:
         return f"{category[:4]} {category[5:9]}"
     return category[:4] if len(category) >= 4 else category
+
+
+def _is_agency_category(category: str) -> bool:
+    return _to_text(category).upper().startswith("A-")
+
+
+def _empty_bands() -> dict[str, float]:
+    return {k: 0.0 for k in _BAND_KEYS}
+
+
+def _compute_emp_agency_bands(employees: list[MonthlyEmployee]) -> dict[str, dict[str, float]]:
+    emp = _empty_bands()
+    agency = _empty_bands()
+    for e in employees:
+        target = agency if _is_agency_category(e.Category) else emp
+        target["BasicHours"] += e.BasicHours
+        target["MonFriOvertime"] += e.MonFriOvertime
+        target["SatSunOvertime"] += e.SatSunOvertime
+        target["AnnualHoliday"] += e.AnnualHoliday
+        target["TotalPaidHours"] += e.TotalPaidHours
+    total = {k: emp[k] + agency[k] for k in _BAND_KEYS}
+    return {"EMP": emp, "AGENCY": agency, "TOTAL": total}
+
+
+def _sum_emp_agency_bands(week_bands: list[dict[str, dict[str, float]]]) -> dict[str, dict[str, float]]:
+    out = {row: _empty_bands() for row in _EMP_AGENCY_ROWS}
+    for bands in week_bands:
+        for row in _EMP_AGENCY_ROWS:
+            for k in _BAND_KEYS:
+                out[row][k] += float(bands.get(row, {}).get(k, 0.0) or 0.0)
+    return out
+
+
+def _employee_totals_from_employees(employees: list[MonthlyEmployee]) -> list[MonthlyEmployeeTotal]:
+    by_cat: dict[str, MonthlyEmployeeTotal] = {}
+    for e in employees:
+        if e.Category not in by_cat:
+            by_cat[e.Category] = MonthlyEmployeeTotal(e.Category, 0.0, 0.0, 0.0, 0.0, 0.0)
+        t = by_cat[e.Category]
+        t.BasicHours += e.BasicHours
+        t.MonFriOvertime += e.MonFriOvertime
+        t.SatSunOvertime += e.SatSunOvertime
+        t.AnnualHoliday += e.AnnualHoliday
+        t.TotalPaidHours += e.TotalPaidHours
+    return list(by_cat.values())
+
+
+def _build_grouped_totals(totals: list[MonthlyEmployeeTotal]) -> dict[str, MonthlyEmployeeTotal]:
+    grouped: dict[str, MonthlyEmployeeTotal] = {}
+    for t in totals:
+        k = _grouped_key(t.Category)
+        if k not in grouped:
+            grouped[k] = MonthlyEmployeeTotal(k, 0.0, 0.0, 0.0, 0.0, 0.0)
+        g = grouped[k]
+        g.BasicHours += t.BasicHours
+        g.MonFriOvertime += t.MonFriOvertime
+        g.SatSunOvertime += t.SatSunOvertime
+        g.AnnualHoliday += t.AnnualHoliday
+        g.TotalPaidHours += t.TotalPaidHours
+    return grouped
+
+
+def _enrich_week_summary(out: MonthlyWeekSummary) -> None:
+    if not out.employee_totals and out.employees:
+        out.employee_totals = _employee_totals_from_employees(out.employees)
+    out.non_agency_total = sum(t.TotalPaidHours for t in out.employee_totals if not _is_agency_category(t.Category))
+    if not out.grouped_totals:
+        out.grouped_totals = _build_grouped_totals(out.employee_totals)
+    out.emp_agency_bands = _compute_emp_agency_bands(out.employees)
+
+
+def _workbook_has_all_data(file_obj: Any) -> bool:
+    file_obj.seek(0)
+    try:
+        xl = pd.ExcelFile(file_obj)
+        return "All Data" in xl.sheet_names
+    except Exception:
+        return False
+    finally:
+        file_obj.seek(0)
+
+
+def parse_weekly_gazebo_all_data(
+    file_obj: Any,
+    *,
+    start_date: str = "",
+    end_date: str = "",
+) -> MonthlyWeekSummary:
+    """Parse weekly Gazebo export (.xlsx) — employees from the All Data sheet."""
+    file_obj.seek(0)
+    df = pd.read_excel(file_obj, sheet_name="All Data", header=None, dtype=str)
+    text_rows = [[_to_text(v) for v in row] for row in df.values.tolist()]
+    out = MonthlyWeekSummary(start_date=start_date, end_date=end_date)
+    if not text_rows:
+        return out
+
+    header_row = -1
+    for i, row in enumerate(text_rows[:5]):
+        if _to_text(row[0] if len(row) > 0 else "").lower() == "name" and _to_text(row[1] if len(row) > 1 else "").lower() == "category":
+            header_row = i
+            break
+    if header_row < 0:
+        return out
+
+    for row in text_rows[header_row + 1 :]:
+        name = _to_text(row[0] if len(row) > 0 else "")
+        if not name:
+            break
+        col_b = _to_text(row[1] if len(row) > 1 else "")
+        if col_b.startswith("Category breakdown"):
+            break
+        out.employees.append(
+            MonthlyEmployee(
+                Name=name,
+                Category=col_b,
+                SageNo=_parse_int(row[2] if len(row) > 2 else ""),
+                BasicHours=_parse_decimal(row[3] if len(row) > 3 else ""),
+                MonFriOvertime=_parse_decimal(row[4] if len(row) > 4 else ""),
+                SatSunOvertime=_parse_decimal(row[5] if len(row) > 5 else ""),
+                AnnualHoliday=_parse_decimal(row[6] if len(row) > 6 else ""),
+                TotalPaidHours=_parse_decimal(row[7] if len(row) > 7 else ""),
+            )
+        )
+    _enrich_week_summary(out)
+    return out
 
 
 def parse_monthly_week_file(file_obj: Any) -> MonthlyWeekSummary:
@@ -159,24 +290,31 @@ def parse_monthly_week_file(file_obj: Any) -> MonthlyWeekSummary:
             out.employee_totals.append(total)
             tr += 1
 
-    out.non_agency_total = sum(t.TotalPaidHours for t in out.employee_totals if not t.Category.startswith("A-"))
-    grouped: dict[str, MonthlyEmployeeTotal] = {}
-    for t in out.employee_totals:
-        k = _grouped_key(t.Category)
-        if k not in grouped:
-            grouped[k] = MonthlyEmployeeTotal(k, 0.0, 0.0, 0.0, 0.0, 0.0)
-        g = grouped[k]
-        g.BasicHours += t.BasicHours
-        g.MonFriOvertime += t.MonFriOvertime
-        g.SatSunOvertime += t.SatSunOvertime
-        g.AnnualHoliday += t.AnnualHoliday
-        g.TotalPaidHours += t.TotalPaidHours
-    out.grouped_totals = grouped
+    _enrich_week_summary(out)
     return out
 
 
-def parse_monthly_inputs(weekly_files: list[Any]) -> list[MonthlyWeekSummary]:
-    return [parse_monthly_week_file(f) for f in weekly_files]
+def parse_monthly_inputs(
+    weekly_files: list[Any],
+    week_dates: list[tuple[str, str]] | None = None,
+) -> list[MonthlyWeekSummary]:
+    week_dates = week_dates or []
+    summaries: list[MonthlyWeekSummary] = []
+    for i, f in enumerate(weekly_files):
+        start_date, end_date = week_dates[i] if i < len(week_dates) else ("", "")
+        f.seek(0)
+        if _workbook_has_all_data(f):
+            f.seek(0)
+            s = parse_weekly_gazebo_all_data(f, start_date=start_date, end_date=end_date)
+        else:
+            f.seek(0)
+            s = parse_monthly_week_file(f)
+            if start_date:
+                s.start_date = start_date
+            if end_date:
+                s.end_date = end_date
+        summaries.append(s)
+    return summaries
 
 
 def monthly_summaries_to_json(summaries: list[MonthlyWeekSummary]) -> list[dict[str, Any]]:
@@ -193,11 +331,14 @@ def monthly_summaries_from_json(data: list[dict[str, Any]]) -> list[MonthlyWeekS
             start_date=str(d.get("start_date", "")),
             end_date=str(d.get("end_date", "")),
             non_agency_total=float(d.get("non_agency_total", 0.0)),
+            emp_agency_bands=dict(d.get("emp_agency_bands") or {}),
         )
         s.grouped_totals = {}
         for k, v in (d.get("grouped_totals") or {}).items():
             if isinstance(v, dict):
                 s.grouped_totals[str(k)] = MonthlyEmployeeTotal(**v)
+        if not s.emp_agency_bands and s.employees:
+            _enrich_week_summary(s)
         out.append(s)
     return out
 
@@ -222,6 +363,25 @@ def _write_total_header(ws, r: int) -> None:
     ws.cell(r, 8, "TotalPaidHours")
 
 
+def _write_emp_agency_block(
+    ws,
+    r: int,
+    bands: dict[str, dict[str, float]],
+    *,
+    row_label: str | None = None,
+) -> int:
+    """EMP/AGENCY/TOTAL in col C with bands in D–H; optional label in col B on first row."""
+    for i, key in enumerate(_EMP_AGENCY_ROWS):
+        if row_label and i == 0:
+            ws.cell(r, 2, row_label)
+        ws.cell(r, 3, key)
+        row_bands = bands.get(key) or _empty_bands()
+        for j, col in enumerate(_BAND_KEYS):
+            ws.cell(r, 4 + j, float(row_bands.get(col, 0.0) or 0.0))
+        r += 1
+    return r
+
+
 def build_monthly_excel_bytes(
     week_summaries: list[MonthlyWeekSummary],
     non_hourly_names: set[str] | None = None,
@@ -230,13 +390,19 @@ def build_monthly_excel_bytes(
     wb.remove(wb.active)
 
     grouped_from_weeks: list[dict[str, MonthlyEmployeeTotal]] = []
+    week_emp_agency_list: list[dict[str, dict[str, float]]] = []
+
     for i, s in enumerate(week_summaries, start=1):
+        if not s.emp_agency_bands:
+            _enrich_week_summary(s)
+        week_emp_agency_list.append(s.emp_agency_bands)
+
         ws = wb.create_sheet(f"Week{i}")
         ws.cell(1, 1, f"Week {i}")
         ws.cell(1, 4, "Start Date")
-        ws.cell(1, 5, f"D {s.start_date}")
+        ws.cell(1, 5, f"D {s.start_date}" if s.start_date else "")
         ws.cell(1, 7, "End Date")
-        ws.cell(1, 8, f"D {s.end_date}")
+        ws.cell(1, 8, f"D {s.end_date}" if s.end_date else "")
         _write_header(ws, 3)
 
         r = 4
@@ -267,7 +433,6 @@ def build_monthly_excel_bytes(
         r += 2
         _write_total_header(ws, r)
         r += 1
-        non_agency_bands = [0.0, 0.0, 0.0, 0.0, 0.0]
         for t in s.employee_totals:
             ws.cell(r, 2, t.Category)
             ws.cell(r, 4, t.BasicHours)
@@ -275,16 +440,11 @@ def build_monthly_excel_bytes(
             ws.cell(r, 6, t.SatSunOvertime)
             ws.cell(r, 7, t.AnnualHoliday)
             ws.cell(r, 8, t.TotalPaidHours)
-            if not t.Category.startswith("A-"):
-                non_agency_bands[0] += t.BasicHours
-                non_agency_bands[1] += t.MonFriOvertime
-                non_agency_bands[2] += t.SatSunOvertime
-                non_agency_bands[3] += t.AnnualHoliday
-                non_agency_bands[4] += t.TotalPaidHours
             r += 1
 
         r += 1
-        for k, v in s.grouped_totals.items():
+        for k in sorted(s.grouped_totals.keys()):
+            v = s.grouped_totals[k]
             ws.cell(r, 2, k)
             ws.cell(r, 4, v.BasicHours)
             ws.cell(r, 5, v.MonFriOvertime)
@@ -294,11 +454,7 @@ def build_monthly_excel_bytes(
             r += 1
 
         r += 2
-        ws.cell(r, 4, non_agency_bands[0])
-        ws.cell(r, 5, non_agency_bands[1])
-        ws.cell(r, 6, non_agency_bands[2])
-        ws.cell(r, 7, non_agency_bands[3])
-        ws.cell(r, 8, non_agency_bands[4])
+        r = _write_emp_agency_block(ws, r, s.emp_agency_bands)
         grouped_from_weeks.append(s.grouped_totals)
 
     merged_employees: dict[str, MonthlyEmployee] = {}
@@ -336,6 +492,14 @@ def build_monthly_excel_bytes(
             raise ValueError(f"Agency employee cannot be non-hourly: {e.Name}")
 
     ws = wb.create_sheet("Summary")
+    ws.cell(1, 1, "Week Monthly Summary")
+    if week_summaries and week_summaries[0].start_date:
+        ws.cell(1, 4, "Start Date")
+        ws.cell(1, 5, f"D {week_summaries[0].start_date}")
+    if week_summaries and week_summaries[-1].end_date:
+        ws.cell(1, 7, "End Date")
+        ws.cell(1, 8, f"D {week_summaries[-1].end_date}")
+
     _write_header(ws, 3)
     r = 4
     for e in merged_employees.values():
@@ -352,7 +516,6 @@ def build_monthly_excel_bytes(
     r += 2
     _write_total_header(ws, r)
     r += 1
-    non_agency_summary = [0.0, 0.0, 0.0, 0.0, 0.0]
     for t in merged_totals.values():
         ws.cell(r, 2, t.Category)
         ws.cell(r, 4, t.BasicHours)
@@ -360,12 +523,6 @@ def build_monthly_excel_bytes(
         ws.cell(r, 6, t.SatSunOvertime)
         ws.cell(r, 7, t.AnnualHoliday)
         ws.cell(r, 8, t.TotalPaidHours)
-        if not t.Category.startswith("A-"):
-            non_agency_summary[0] += t.BasicHours
-            non_agency_summary[1] += t.MonFriOvertime
-            non_agency_summary[2] += t.SatSunOvertime
-            non_agency_summary[3] += t.AnnualHoliday
-            non_agency_summary[4] += t.TotalPaidHours
         non_hourly = [e for e in merged_employees.values() if not e.IsHourly and e.Category.upper() == t.Category.upper()]
         if non_hourly:
             ws.cell(r + 1, 2, f"{t.Category} non-hourly hours")
@@ -390,7 +547,8 @@ def build_monthly_excel_bytes(
             a.SatSunOvertime += t.SatSunOvertime
             a.AnnualHoliday += t.AnnualHoliday
             a.TotalPaidHours += t.TotalPaidHours
-    for t in agg_grouped.values():
+    for k in sorted(agg_grouped.keys()):
+        t = agg_grouped[k]
         ws.cell(r, 2, t.Category)
         ws.cell(r, 4, t.BasicHours)
         ws.cell(r, 5, t.MonFriOvertime)
@@ -399,12 +557,28 @@ def build_monthly_excel_bytes(
         ws.cell(r, 8, t.TotalPaidHours)
         r += 1
 
-    r += 2
-    ws.cell(r, 4, non_agency_summary[0])
-    ws.cell(r, 5, non_agency_summary[1])
-    ws.cell(r, 6, non_agency_summary[2])
-    ws.cell(r, 7, non_agency_summary[3])
-    ws.cell(r, 8, non_agency_summary[4])
+    if week_emp_agency_list:
+        r += 2
+        monthly_bands = _sum_emp_agency_bands(week_emp_agency_list)
+        r = _write_emp_agency_block(ws, r, monthly_bands, row_label="MONTHLY")
+
+        for wi, bands in enumerate(week_emp_agency_list):
+            r += 1
+            label = "Weekly" if wi == 0 else None
+            r = _write_emp_agency_block(ws, r, bands, row_label=label)
+
+        merged_month = _compute_emp_agency_bands(list(merged_employees.values()))
+        week_total_sum = _empty_bands()
+        for bands in week_emp_agency_list:
+            for k in _BAND_KEYS:
+                week_total_sum[k] += float(bands.get("TOTAL", {}).get(k, 0.0) or 0.0)
+        diff_bands = {
+            "EMP": {k: merged_month["EMP"][k] - monthly_bands["EMP"][k] for k in _BAND_KEYS},
+            "AGENCY": {k: merged_month["AGENCY"][k] - monthly_bands["AGENCY"][k] for k in _BAND_KEYS},
+            "TOTAL": {k: merged_month["TOTAL"][k] - week_total_sum[k] for k in _BAND_KEYS},
+        }
+        r += 1
+        r = _write_emp_agency_block(ws, r, diff_bands, row_label="Diff")
 
     out = BytesIO()
     wb.save(out)
