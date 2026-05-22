@@ -581,9 +581,9 @@ def build_emp_agency_total_df(result: PayrollResult) -> pd.DataFrame:
     total = _sum_hour_bands(result.rows)
     return pd.DataFrame(
         [
-            {"Summary": "EMP", **emp},
-            {"Summary": "AGENCY", **agency},
-            {"Summary": "TOTAL", **total},
+            {"Category": "EMP", **emp},
+            {"Category": "AGENCY", **agency},
+            {"Category": "TOTAL", **total},
         ]
     )
 
@@ -697,6 +697,23 @@ def _apply_table_border(ws, min_row: int, max_row: int, min_col: int, max_col: i
             ws.cell(r, c).border = _TABLE_BORDER
 
 
+def _band_totals_from_df(df: pd.DataFrame) -> dict[str, float]:
+    return {c: float(df[c].sum()) for c in _CATEGORY_BAND_COLS}
+
+
+def _band_totals_from_emp_agency_total(emp_agency_df: pd.DataFrame) -> dict[str, float]:
+    total_row = emp_agency_df.loc[emp_agency_df["Category"] == "TOTAL"].iloc[0]
+    return {c: float(total_row[c]) for c in _CATEGORY_BAND_COLS}
+
+
+def _append_band_values_row(ws, start_row: int, label: str, bands: dict[str, float]) -> int:
+    """Write a labeled row of hour-band values (cols B and D–H). Returns one past the last row."""
+    ws.cell(start_row, _CATEGORY_COL, label)
+    for i, col in enumerate(_CATEGORY_BAND_COLS):
+        ws.cell(start_row, _CATEGORY_NUM_START + i, float(bands[col]))
+    return start_row + 1
+
+
 def _append_grand_total_row_openpyxl(
     ws,
     totals_df: pd.DataFrame,
@@ -753,13 +770,13 @@ def _append_emp_agency_total_block(ws, emp_agency_df: pd.DataFrame, start_row: i
     if emp_agency_df.empty:
         return start_row
     r = start_row
-    ws.cell(r, _CATEGORY_COL, "Summary")
+    ws.cell(r, _CATEGORY_COL, "Category")
     for i, h in enumerate(_CATEGORY_BAND_COLS):
         ws.cell(r, _CATEGORY_NUM_START + i, h)
     r += 1
     for _, row in emp_agency_df.iterrows():
-        summary = row["Summary"]
-        ws.cell(r, _CATEGORY_COL, "" if pd.isna(summary) else str(summary))
+        label = row["Category"]
+        ws.cell(r, _CATEGORY_COL, "" if pd.isna(label) else str(label))
         for i, h in enumerate(_CATEGORY_BAND_COLS):
             v = row[h]
             ws.cell(r, _CATEGORY_NUM_START + i, 0.0 if pd.isna(v) else float(v))
@@ -812,6 +829,10 @@ def build_excel_bytes(result: PayrollResult) -> bytes:
             r = _append_section_title(ws_all, r, tier_titles[3])
             table_start = r
             end_row = _append_hour_totals_block(ws_all, overall_df, r, grand_label="GRAND TOTAL")
+            overall_totals = _band_totals_from_df(overall_df)
+            emp_totals = _band_totals_from_emp_agency_total(emp_agency_df)
+            diff_bands = {c: overall_totals[c] - emp_totals[c] for c in _CATEGORY_BAND_COLS}
+            end_row = _append_band_values_row(ws_all, end_row, "Difference", diff_bands)
             _apply_table_border(ws_all, table_start, end_row - 1, _CATEGORY_COL, border_max_col)
 
             ws_an = writer.book["Analysis"]
