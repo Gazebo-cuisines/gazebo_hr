@@ -365,9 +365,19 @@ def _monthly_context(session_blob: dict) -> dict:
 	category_totals = sorted((_round(v) for v in merged_totals.values()), key=lambda r: r['TotalPaidHours'], reverse=True)
 	grouped_totals = sorted((_round(v) for v in merged_grouped.values()), key=lambda r: r['TotalPaidHours'], reverse=True)
 
+	stored_dates = session_blob.get('week_dates') or []
+	week_date_fields = [
+		{
+			'start': stored_dates[i][0] if i < len(stored_dates) else '',
+			'end': stored_dates[i][1] if i < len(stored_dates) else '',
+		}
+		for i in range(5)
+	]
+
 	return {
 		'week_cards': week_cards,
 		'week_count': len(summaries),
+		'week_date_fields': week_date_fields,
 		'non_hourly_names': session_blob.get('non_hourly') or [],
 		'category_totals': category_totals,
 		'grouped_totals': grouped_totals,
@@ -396,7 +406,12 @@ def monthly_report(request: HttpRequest):
 			messages.error(request, f'Upload {required} weekly workbook(s) (xls/xlsx), or enable week 5 and upload all five.')
 			return redirect('weekly:monthly_report')
 		try:
-			summaries = parse_monthly_inputs(files)
+			week_dates = []
+			for n in ('1', '2', '3', '4', '5'):
+				start = (request.POST.get(f'week{n}_start') or '').strip()
+				end = (request.POST.get(f'week{n}_end') or '').strip()
+				week_dates.append((start, end))
+			summaries = parse_monthly_inputs(files, week_dates=week_dates)
 			non_hourly = _parse_non_hourly_names(request.POST.get('non_hourly_names', ''))
 			for s in summaries:
 				for e in s.employees:
@@ -407,6 +422,7 @@ def monthly_report(request: HttpRequest):
 				'summaries_json': monthly_summaries_to_json(summaries),
 				'non_hourly': sorted(non_hourly),
 				'week_count': len(summaries),
+				'week_dates': week_dates[: len(summaries)],
 			}
 			request.session.modified = True
 			messages.success(request, f'Processed {len(summaries)} weekly file(s). Download Excel when ready.')

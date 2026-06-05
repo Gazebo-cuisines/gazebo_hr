@@ -347,6 +347,10 @@ class BuildExcelNewSheetsTest(unittest.TestCase):
         self.assertGreaterEqual(pack_hours, dpch_hours)
 
 
+_MONTH_DIR = Path(__file__).resolve().parent.parent / "data" / "month"
+_GAZEBO_WEEKLY_XLSX = _MONTH_DIR / "gazebo_weekly_report_20260522-1401.xlsx"
+_MONTHLY_REF = _MONTH_DIR / "EXCEL_MONHTLY_MAY2026.xls"
+
 _DATA = Path(__file__).resolve().parent.parent / "data"
 _TEST_DATA = _DATA / "TEST_DATA"
 _OVERTIME_TEST_DIR = _DATA / "ovettime_error_test_data"
@@ -491,3 +495,97 @@ class ClockriteContractParseTest(unittest.TestCase):
         # Sample data: 189/190 Pay IDs exist as Payroll Number in the contract file
         self.assertGreaterEqual(matched, 180)
         self.assertLess(matched, len(result.rows) + 1)
+
+
+@unittest.skipUnless(_GAZEBO_WEEKLY_XLSX.is_file(), "data/month/gazebo weekly xlsx not in repo")
+class MonthlyGazeboAllDataTest(unittest.TestCase):
+    def test_parse_all_data_sheet(self) -> None:
+        from .monthly_service import parse_weekly_gazebo_all_data
+
+        with _GAZEBO_WEEKLY_XLSX.open("rb") as f:
+            s = parse_weekly_gazebo_all_data(f, start_date="20/04/2026", end_date="26/04/2026")
+        self.assertEqual(s.start_date, "20/04/2026")
+        self.assertGreater(len(s.employees), 200)
+        self.assertEqual(len(s.employee_totals), 26)
+        self.assertIn("EMP", s.emp_agency_bands)
+        self.assertAlmostEqual(s.emp_agency_bands["TOTAL"]["TotalPaidHours"], 5034.75, places=2)
+
+    def test_build_monthly_workbook_summary_blocks(self) -> None:
+        from .monthly_service import build_monthly_excel_bytes, parse_weekly_gazebo_all_data
+
+        with _GAZEBO_WEEKLY_XLSX.open("rb") as f:
+            week = parse_weekly_gazebo_all_data(f)
+        summaries = [week, week, week, week]
+        data = build_monthly_excel_bytes(summaries)
+        wb = load_workbook(BytesIO(data), read_only=True)
+        ws = wb["Summary"]
+        labels = {ws.cell(r, 2).value for r in range(1, ws.max_row + 1) if ws.cell(r, 2).value}
+        self.assertIn("MONTHLY", labels)
+        self.assertIn("Weekly", labels)
+        self.assertIn("Diff", labels)
+        monthly_emp_row = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 2).value == "MONTHLY")
+        self.assertEqual(ws.cell(monthly_emp_row, 3).value, "EMP")
+        monthly_total_formula = str(ws.cell(monthly_emp_row, 8).value)
+        self.assertTrue(monthly_total_formula.startswith("="))
+        self.assertIn("'Week1'!", monthly_total_formula)
+        self.assertIn("'Week4'!", monthly_total_formula)
+        cat_formula = None
+        for r in range(1, ws.max_row + 1):
+            val = ws.cell(r, 4).value
+            if isinstance(val, str) and val.startswith("=SUMIFS"):
+                cat_formula = val
+                break
+        self.assertIsNotNone(cat_formula, "Expected SUMIFS formula in category totals")
+        emp_formula = None
+        for r in range(1, ws.max_row + 1):
+            val = ws.cell(r, 4).value
+            if isinstance(val, str) and "SUMIF('Week1'!" in val:
+                emp_formula = val
+                break
+        self.assertIsNotNone(emp_formula, "Expected cross-week SUMIF on Summary employee table")
+        diff_emp_row = next(
+            r for r in range(1, ws.max_row + 1)
+            if ws.cell(r, 2).value == "Diff" and ws.cell(r, 3).value == "EMP"
+        )
+        diff_total_row = diff_emp_row + 2
+        self.assertEqual(ws.cell(diff_total_row, 3).value, "TOTAL")
+        diff_total_formula = str(ws.cell(diff_total_row, 8).value)
+        self.assertIn("-H", diff_total_formula)
+        self.assertNotIn("'Week1'!", diff_total_formula, "Diff TOTAL should reference MONTHLY row, not raw week sum")
+        monthly_emp_row = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 2).value == "MONTHLY")
+        monthly_total_row = monthly_emp_row + 2
+        self.assertEqual(ws.cell(monthly_total_row, 3).value, "TOTAL")
+        self.assertIn(f"H{monthly_total_row}", diff_total_formula)
+        wb.close()
+
+    def test_week_sheet_has_emp_agency_in_col_c(self) -> None:
+        from .monthly_service import build_monthly_excel_bytes, parse_weekly_gazebo_all_data
+
+        with _GAZEBO_WEEKLY_XLSX.open("rb") as f:
+            week = parse_weekly_gazebo_all_data(f)
+        data = build_monthly_excel_bytes([week])
+        wb = load_workbook(BytesIO(data), read_only=True)
+        ws = wb["Week1"]
+        emp_row = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 3).value == "EMP")
+        emp_basic = str(ws.cell(emp_row, 4).value)
+        self.assertTrue(emp_basic.startswith("=SUM("))
+        agency_row = next(r for r in range(1, ws.max_row + 1) if ws.cell(r, 3).value == "AGENCY")
+        agency_basic = str(ws.cell(agency_row, 4).value)
+        self.assertTrue(agency_basic.startswith("=SUMPRODUCT"))
+        cat_row = next(
+            r for r in range(1, ws.max_row + 1)
+            if isinstance(ws.cell(r, 4).value, str) and str(ws.cell(r, 4).value).startswith("=SUMIFS")
+        )
+        self.assertIn("$B$", str(ws.cell(cat_row, 4).value))
+        wb.close()
+
+
+@unittest.skipUnless(_MONTHLY_REF.is_file(), "data/month/EXCEL_MONHTLY_MAY2026.xls not in repo")
+class MonthlyLegacyWeekParseTest(unittest.TestCase):
+    def test_legacy_w1_still_parses(self) -> None:
+        from .monthly_service import parse_monthly_week_file
+
+        with (_MONTHLY_REF).open("rb") as f:
+            s = parse_monthly_week_file(f)
+        self.assertGreater(len(s.employees), 50)
+        self.assertIn("EMP", s.emp_agency_bands)
