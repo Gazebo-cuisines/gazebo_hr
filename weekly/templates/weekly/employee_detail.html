@@ -1,0 +1,131 @@
+{% extends "weekly/dashboard_base.html" %}
+{% block extra_head %}
+<style>
+.employee-profile { max-width: 900px; }
+.employee-profile h1 { color: #003078; }
+.employee-profile__back { margin-bottom: 1rem; font-size: 0.9rem; }
+.employee-profile__grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+	gap: 1rem;
+	margin-bottom: 1.5rem;
+}
+.employee-profile__section h2 {
+	font-size: 1rem;
+	font-weight: 700;
+	color: #003078;
+	margin: 0 0 0.75rem;
+}
+.employee-profile dl { margin: 0; }
+.employee-profile dt {
+	font-size: 0.75rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	color: #5a6a7a;
+	margin-bottom: 0.15rem;
+}
+.employee-profile dd {
+	margin: 0 0 0.65rem;
+	font-size: 0.95rem;
+}
+.employee-profile__notes {
+	white-space: pre-wrap;
+	font-size: 0.9rem;
+}
+</style>
+{% endblock %}
+{% block dashboard_content %}
+<div class="employee-profile">
+	<p class="employee-profile__back">
+		<a href="{% url 'weekly:employee_hour_contracts' %}">&larr; All employees</a>
+	</p>
+	<h1 class="heading-xl">{{ page_heading }}</h1>
+	{% if employee.clock_name %}
+	<p class="lead mb-3">Clock name: {{ employee.clock_name }}</p>
+	{% endif %}
+
+	<div class="employee-profile__grid">
+		<div class="card shadow-sm employee-profile__section">
+			<div class="card-body">
+				<h2>Identity</h2>
+				<dl>
+					<dt>Payroll number</dt>
+					<dd>{{ employee.payroll_number }}</dd>
+					<dt>Prox ID</dt>
+					<dd>{{ employee.prox_id|default:"—" }}</dd>
+					<dt>Sage Pay Ref</dt>
+					<dd>{{ employee.sage_pay_ref|default:"—" }}</dd>
+					<dt>Company</dt>
+					<dd>{{ employee.company|default:"—" }}</dd>
+				</dl>
+			</div>
+		</div>
+		<div class="card shadow-sm employee-profile__section">
+			<div class="card-body">
+				<h2>Employment</h2>
+				<dl>
+					<dt>Group</dt>
+					<dd>{{ employee.group|default:"—" }}</dd>
+					<dt>Status</dt>
+					<dd>{{ employee.status|default:"—" }}{% if not employee.is_active %} (inactive){% endif %}</dd>
+					<dt>Start date</dt>
+					<dd>{{ employee.start_date|date:"j M Y"|default:"—" }}</dd>
+					<dt>Finish date</dt>
+					<dd>{{ employee.finish_date|date:"j M Y"|default:"—" }}</dd>
+					<dt>Shift group</dt>
+					<dd>{{ employee.shift_group|default:"—" }}</dd>
+				</dl>
+			</div>
+		</div>
+		<div class="card shadow-sm employee-profile__section">
+			<div class="card-body">
+				<h2>Contract</h2>
+				<dl>
+					<dt>Contract hours</dt>
+					<dd>{{ employee.contract_hours }}</dd>
+					<dt>Basic rate</dt>
+					<dd>{{ employee.basic_rate }}</dd>
+					<dt>Holidays left</dt>
+					<dd>{% if employee.holidays_left is not None %}{{ employee.holidays_left }}{% else %}—{% endif %}</dd>
+					<dt>O/T rule</dt>
+					<dd>{{ employee.ot_rule|default:"—" }}</dd>
+					<dt>Sage pay frequency</dt>
+					<dd>{{ employee.sage_pay_freq|default:"—" }}</dd>
+					<dt>Sage Paylink</dt>
+					<dd>{{ employee.sage_paylink|default:"—" }}</dd>
+					<dt>Default activity</dt>
+					<dd>{{ employee.default_activity|default:"—" }}</dd>
+					<dt>Default job</dt>
+					<dd>{{ employee.default_job|default:"—" }}</dd>
+				</dl>
+			</div>
+		</div>
+	</div>
+
+	{% if employee.notes %}
+	<div class="card shadow-sm mb-3">
+		<div class="card-body">
+			<h2 class="h6 text-primary fw-bold mb-2">Notes</h2>
+			<p class="employee-profile__notes mb-0">{{ employee.notes }}</p>
+		</div>
+	</div>
+	{% endif %}
+
+	<div class="card shadow-sm">
+		<div class="card-body">
+			<h2 class="h6 text-primary fw-bold mb-2">Documents</h2>
+			{% if documents %}
+			<ul class="mb-0">
+				{% for doc in documents %}
+				<li>{{ doc.get_doc_type_display }} — {{ doc.title }} ({{ doc.uploaded_at|date:"j M Y" }})</li>
+				{% endfor %}
+			</ul>
+			{% else %}
+			<p class="mb-0 text-muted">Holiday forms and correspondence can be attached here in a future release (including upload to AWS S3).</p>
+			{% endif %}
+			<p class="mt-2 mb-0 small text-muted">Last imported: {{ employee.imported_at|date:"j M Y H:i" }}{% if employee.source_filename %} from {{ employee.source_filename }}{% endif %}</p>
+		</div>
+	</div>
+</div>
+{% endblock %}

@@ -89,3 +89,22 @@ To sign out, use **Sign out** in the top-right corner.
 | Numbers look off for one person | Check that ClockRite export type is the right one (see step 2). Re-export and try again. |
 | Page isn't updating | Hard-refresh the browser (Cmd-Shift-R / Ctrl-Shift-R). |
 | Can't sign in | Contact Utsav to reset the password. |
+
+## Employee directory (hour contracts)
+
+The **Employee hour contracts** page lists staff imported from the same **Employee Details (Advanced)** export used for weekly contract matching.
+
+### First import or refresh after HR updates ClockRite
+
+On **Employee hour contracts**, use **Import / update** and upload the `.xls` or `.xlsx` file from ClockRite (**Employee Details (Advanced)**).
+
+Or on the server (or locally with MySQL running):
+
+```bash
+python manage.py import_employees path/to/Employee_Details_export.xls
+```
+
+- Re-importing **updates** existing rows by payroll number; it does not create duplicates.
+- Optional checkbox on the page (or `--deactivate-missing` on the command): mark employees not in the file as inactive — use only for a full company export.
+
+After import, search by name or group and click a card to open the employee profile. Holiday forms and correspondence documents are planned for a later release.

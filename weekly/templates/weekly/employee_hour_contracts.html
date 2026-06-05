@@ -1,10 +1,190 @@
 {% extends "weekly/dashboard_base.html" %}
+{% block extra_head %}
+<style>
+.employee-directory { max-width: 1200px; }
+.employee-directory h1 { color: #003078; }
+.employee-directory__toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.75rem;
+	align-items: center;
+	margin-bottom: 1.25rem;
+}
+.employee-directory__toolbar input { max-width: 20rem; }
+.employee-directory__import {
+	margin-bottom: 1.5rem;
+}
+.employee-directory__import .weekly-file-field {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	align-items: center;
+}
+.employee-directory__import .weekly-file-field input[type="file"] {
+	max-width: 100%;
+	flex: 1 1 14rem;
+}
+.employee-directory__meta {
+	font-size: 0.9rem;
+	color: #5a6a7a;
+	margin-bottom: 1rem;
+}
+.employee-card-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+	gap: 1rem;
+}
+.employee-card {
+	display: flex;
+	flex-direction: row;
+	align-items: stretch;
+	min-height: 5.5rem;
+	background: #fff;
+	border: 1px solid #e6ecf5;
+	border-radius: 8px;
+	padding: 0.9rem 1.1rem;
+	text-decoration: none;
+	color: inherit;
+	transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.employee-card:hover {
+	border-color: #003078;
+	box-shadow: 0 4px 14px rgba(0, 48, 120, 0.12);
+	color: inherit;
+}
+.employee-card__main { flex: 1; min-width: 0; }
+.employee-card__name {
+	font-size: 1.05rem;
+	font-weight: 700;
+	color: #003078;
+	margin: 0 0 0.25rem;
+	line-height: 1.25;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.employee-card__sub {
+	font-size: 0.85rem;
+	color: #5a6a7a;
+	margin: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.employee-card__aside {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	justify-content: space-between;
+	margin-left: 0.75rem;
+	flex-shrink: 0;
+}
+.employee-card__payroll {
+	font-size: 0.8rem;
+	font-weight: 600;
+	color: #003078;
+}
+.employee-card__hours {
+	font-size: 0.85rem;
+	color: #333;
+}
+.employee-badge {
+	font-size: 0.7rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	padding: 0.15rem 0.45rem;
+	border-radius: 4px;
+}
+.employee-badge--current { background: #e8f5e9; color: #1b5e20; }
+.employee-badge--other { background: #f5f5f5; color: #616161; }
+.employee-badge--inactive { background: #ffebee; color: #b71c1c; }
+.employee-directory__empty {
+	padding: 2rem;
+	text-align: center;
+	color: #5a6a7a;
+}
+</style>
+{% endblock %}
 {% block dashboard_content %}
-<h1 class="heading-xl">{{ page_heading }}</h1>
-<p class="lead">Employee contracted hours and variances will appear here.</p>
-<div class="card shadow-sm">
-	<div class="card-body">
-		<p class="mb-0">Placeholder content for employee hour contracts.</p>
+<div class="employee-directory">
+	<h1 class="heading-xl">{{ page_heading }}</h1>
+	<p class="lead">Employee profiles from ClockRite Employee Details. Select a card to view full details.</p>
+
+	{% if messages %}
+	<div class="mb-3" aria-live="polite">
+		{% for message in messages %}
+		<div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags|default:'info' }}{% endif %} mb-2" role="alert">{{ message }}</div>
+		{% endfor %}
 	</div>
+	{% endif %}
+
+	<div class="card shadow-sm employee-directory__import">
+		<div class="card-body">
+			<h2 class="h6 text-primary fw-bold mb-2">Import / update from ClockRite</h2>
+			<p class="form-text mb-2">Upload the same <strong>Employee Details (Advanced)</strong> .xls export used for weekly contract hours. Existing payroll numbers are updated; new ones are added.</p>
+			<form method="post" enctype="multipart/form-data" id="employee-import-form">
+				{% csrf_token %}
+				{% if show_all %}<input type="hidden" name="show_all" value="1">{% endif %}
+				{% if search_q %}<input type="hidden" name="q" value="{{ search_q }}">{% endif %}
+				<div class="weekly-file-field mb-2">
+					<label class="form-label mb-0" for="id_employee_details_file">Employee Details file</label>
+					<input id="id_employee_details_file" class="form-control" type="file" name="employee_details_file" accept=".xls,.xlsx" required>
+				</div>
+				<div class="form-check mb-2">
+					<input class="form-check-input" type="checkbox" name="deactivate_missing" value="1" id="id_deactivate_missing">
+					<label class="form-check-label" for="id_deactivate_missing">Mark employees not in this file as inactive</label>
+				</div>
+				<button type="submit" class="btn btn-primary btn-sm">Import / update</button>
+			</form>
+		</div>
+	</div>
+
+	<form class="employee-directory__toolbar" method="get" role="search">
+		<label class="visually-hidden" for="employee-q">Search employees</label>
+		<input type="search" class="form-control" id="employee-q" name="q" value="{{ search_q }}" placeholder="Search name, group, payroll #…" autocomplete="off">
+		<button type="submit" class="btn btn-primary btn-sm">Search</button>
+		{% if search_q %}
+		<a class="btn btn-outline-secondary btn-sm" href="{% url 'weekly:employee_hour_contracts' %}{% if show_all %}?show=all{% endif %}">Clear</a>
+		{% endif %}
+		{% if show_all %}
+		<a class="btn btn-outline-secondary btn-sm" href="{% url 'weekly:employee_hour_contracts' %}{% if search_q %}?q={{ search_q|urlencode }}{% endif %}">Active only</a>
+		{% else %}
+		<a class="btn btn-outline-secondary btn-sm" href="{% url 'weekly:employee_hour_contracts' %}?show=all{% if search_q %}&amp;q={{ search_q|urlencode }}{% endif %}">Show all ({{ total_in_db }})</a>
+		{% endif %}
+	</form>
+
+	<p class="employee-directory__meta">
+		Showing <strong>{{ employee_count }}</strong> employee{{ employee_count|pluralize }} ({{ total_in_db }} total in database).
+	</p>
+
+	{% if employees %}
+	<div class="employee-card-grid">
+		{% for emp in employees %}
+		<a class="employee-card" href="{% url 'weekly:employee_detail' emp.slug %}">
+			<div class="employee-card__main">
+				<p class="employee-card__name">{{ emp.full_name }}</p>
+				<p class="employee-card__sub">{{ emp.group|default:"—" }}{% if emp.clock_name %} · {{ emp.clock_name }}{% endif %}</p>
+			</div>
+			<div class="employee-card__aside">
+				{% if emp.is_active %}
+				<span class="employee-badge employee-badge--{% if emp.status|lower == 'current' %}current{% else %}other{% endif %}">{{ emp.status|default:"Active" }}</span>
+				{% else %}
+				<span class="employee-badge employee-badge--inactive">Inactive</span>
+				{% endif %}
+				<span class="employee-card__payroll">Pay #{{ emp.payroll_number }}</span>
+				<span class="employee-card__hours">{{ emp.contract_hours }} hrs</span>
+			</div>
+		</a>
+		{% endfor %}
+	</div>
+	{% else %}
+	<div class="card shadow-sm">
+		<div class="card-body employee-directory__empty">
+			<p class="mb-2">No employees in the directory yet.</p>
+			<p class="mb-0">Import from Employee Details: <code>python manage.py import_employees data/bug1528/demployees_2023.xls</code></p>
+		</div>
+	</div>
+	{% endif %}
 </div>
 {% endblock %}

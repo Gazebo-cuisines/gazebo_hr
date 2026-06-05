@@ -1,9 +1,13 @@
 from typing import Any
+from urllib.parse import urlencode
 
 from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_GET, require_http_methods
 
@@ -13,6 +17,7 @@ from .monthly_service import (
 	monthly_summaries_to_json,
 	parse_monthly_inputs,
 )
+from .employee_import import import_employee_records
 from .payroll_service import (
 	AGENCY_CATEGORIES,
 	PayrollResult,
@@ -20,10 +25,12 @@ from .payroll_service import (
 	_sum_hour_bands,
 	build_excel_bytes,
 	calculate_payroll,
+	parse_employee_directory,
 	parse_employee_hours,
 	total_paid_hours_from_rows,
 )
 from .case_studies_data import CASE_STUDIES, get_case_study
+from .models import Employee
 from .export_service import (
 	add_branding_cover_sheet,
 	build_csv_bytes,
@@ -446,14 +453,96 @@ def download_monthly_excel(request: HttpRequest):
 	return response
 
 
-@require_GET
+def _employee_directory_context(show_all: bool, q: str) -> dict[str, Any]:
+	qs = Employee.objects.all() if show_all else Employee.objects.filter(is_active=True)
+	if q:
+		filters = (
+			Q(full_name__icontains=q)
+			| Q(clock_name__icontains=q)
+			| Q(group__icontains=q)
+		)
+		if q.isdigit():
+			filters |= Q(payroll_number=int(q))
+		qs = qs.filter(filters)
+	employees = list(qs.order_by('full_name'))
+	return {
+		'title': 'Employee hour contracts — Gazebo',
+		'page_heading': 'Employee hour contracts',
+		'employees': employees,
+		'employee_count': len(employees),
+		'search_q': q,
+		'show_all': show_all,
+		'total_in_db': Employee.objects.count(),
+	}
+
+
+@login_required
+@require_http_methods(['GET', 'POST'])
 def employee_hour_contracts(request: HttpRequest):
+	show_all = request.GET.get('show') == 'all' or request.POST.get('show_all') == '1'
+	q = (request.GET.get('q') or request.POST.get('q') or '').strip()
+
+	if request.method == 'POST':
+		upload = request.FILES.get('employee_details_file')
+		if not upload:
+			messages.error(request, 'Choose an Employee Details (Advanced) .xls or .xlsx file to import.')
+		else:
+			name = (upload.name or '').lower()
+			if not (name.endswith('.xls') or name.endswith('.xlsx')):
+				messages.error(request, 'File must be Excel (.xls or .xlsx).')
+			else:
+				try:
+					records = parse_employee_directory(upload)
+					if not records:
+						messages.error(request, 'No employees found in that file. Use ClockRite Employee Details (Advanced).')
+					else:
+						deactivate_missing = request.POST.get('deactivate_missing') == '1'
+						result = import_employee_records(
+							records,
+							upload.name or 'upload.xls',
+							deactivate_missing=deactivate_missing,
+						)
+						msg = (
+							f'Import complete: {result.created} added, {result.updated} updated '
+							f'({result.parsed} rows in file).'
+						)
+						if result.skipped_duplicate:
+							msg += f' {result.skipped_duplicate} duplicate payroll numbers skipped.'
+						if result.deactivated:
+							msg += f' {result.deactivated} marked inactive.'
+						messages.success(request, msg)
+				except Exception as exc:
+					messages.error(request, f'Could not import file: {exc}')
+		query: dict[str, str] = {}
+		if show_all:
+			query['show'] = 'all'
+		if q:
+			query['q'] = q
+		url = reverse('weekly:employee_hour_contracts')
+		if query:
+			url = f'{url}?{urlencode(query)}'
+		return redirect(url)
+
 	return render(
 		request,
 		'weekly/employee_hour_contracts.html',
+		_employee_directory_context(show_all, q),
+	)
+
+
+@login_required
+@require_GET
+def employee_detail(request: HttpRequest, slug: str):
+	employee = get_object_or_404(Employee, slug=slug)
+	documents = employee.documents.all()[:20]
+	return render(
+		request,
+		'weekly/employee_detail.html',
 		{
-			'title': 'Employee hour contracts — Gazebo',
-			'page_heading': 'Employee hour contracts',
+			'title': f'{employee.full_name} — Gazebo',
+			'page_heading': employee.full_name,
+			'employee': employee,
+			'documents': documents,
 		},
 	)
 

@@ -160,6 +160,11 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+USE_S3_STORAGE = os.environ.get('USE_S3_STORAGE', '').lower() in ('1', 'true', 'yes', 'on')
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

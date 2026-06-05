@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import date, datetime
 from io import BytesIO
 from typing import Any
 
@@ -356,6 +357,117 @@ def _block_names_near(rows: list[list[str]], r_payroll: int) -> tuple[str, str]:
             if candidate:
                 full_name = candidate
     return full_name, clock_name
+
+
+def _parse_clockrite_date(value: Any) -> date | None:
+    text = _to_text(value)
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            chunk = text[:19] if " " in text and fmt.startswith("%Y-%m-%d %H") else text
+            return datetime.strptime(chunk, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _block_label_fields(rows: list[list[str]], r_payroll: int) -> dict[str, str]:
+    """Label/value pairs within one ClockRite employee block."""
+    r0 = _block_start_row(rows, r_payroll)
+    r1 = min(len(rows), r_payroll + 6)
+    fields: dict[str, str] = {}
+    for rr in range(r0, r1):
+        row = rows[rr]
+        for c, cell in enumerate(row):
+            key = _normalize_header(cell)
+            if not key or c + 1 >= len(row):
+                continue
+            val = _to_text(row[c + 1])
+            if val and key not in fields:
+                fields[key] = val
+    return fields
+
+
+def _prox_id_from_block(rows: list[list[str]], r_payroll: int) -> int | None:
+    r0 = _block_start_row(rows, r_payroll)
+    if r0 >= len(rows):
+        return None
+    row = rows[r0]
+    return _parse_int(row[0] if row else "")
+
+
+def parse_employee_directory(file_obj: Any) -> list[dict[str, Any]]:
+    """
+    ClockRite Employee Details - Advanced: one record per Payroll Number block.
+    Used to populate the employee directory database.
+    """
+    df = _load_sheet(file_obj)
+    rows = [[_to_text(v) for v in rec] for rec in df.values.tolist()]
+    if not rows:
+        return []
+
+    by_payroll: dict[int, dict[str, Any]] = {}
+    for r, row in enumerate(rows):
+        for c, cell in enumerate(row):
+            if _normalize_header(cell) != "payrollnumber":
+                continue
+            if c + 1 >= len(row):
+                continue
+            pay_no = _parse_int(row[c + 1])
+            if pay_no is None or pay_no <= 0:
+                continue
+
+            full_name, clock_name = _block_names_near(rows, r)
+            if not full_name:
+                continue
+
+            fields = _block_label_fields(rows, r)
+            contract_hrs = _contract_hrs_value_in_row(row)
+            if contract_hrs is None:
+                for back in range(1, 25):
+                    if r - back < 0:
+                        break
+                    got = _contract_hrs_value_in_row(rows[r - back])
+                    if got is not None:
+                        contract_hrs = got
+                        break
+            if contract_hrs is None:
+                contract_hrs = _parse_decimal(fields.get("contracthrs", "0"))
+
+            sage_refs = _sage_pay_ref_ids_in_block(rows, r)
+            sage_pay_ref = pay_no
+            for sid in sage_refs:
+                if sid == pay_no:
+                    sage_pay_ref = sid
+                    break
+            if sage_pay_ref == pay_no and sage_refs:
+                sage_pay_ref = sage_refs[0]
+
+            by_payroll[pay_no] = {
+                "payroll_number": pay_no,
+                "prox_id": _prox_id_from_block(rows, r),
+                "sage_pay_ref": sage_pay_ref,
+                "full_name": full_name,
+                "clock_name": clock_name,
+                "company": fields.get("company", ""),
+                "group": fields.get("group", ""),
+                "status": fields.get("status", ""),
+                "contract_hours": float(contract_hrs),
+                "basic_rate": _parse_decimal(fields.get("basicrate", "0")),
+                "holidays_left": _parse_decimal(fields.get("holidaysleft", "")) or None,
+                "sage_pay_freq": fields.get("sagepayfreq", ""),
+                "sage_paylink": fields.get("sagepaylink", ""),
+                "start_date": _parse_clockrite_date(fields.get("startdate", "")),
+                "finish_date": _parse_clockrite_date(fields.get("finishdate", "")),
+                "shift_group": fields.get("shiftgroup", ""),
+                "ot_rule": fields.get("otrule", ""),
+                "default_activity": fields.get("defaultactivity", ""),
+                "default_job": fields.get("defaultjob", ""),
+                "notes": fields.get("notes", ""),
+            }
+
+    return list(by_payroll.values())
 
 
 def _parse_clockrite_display_names(rows: list[list[str]]) -> tuple[dict[int, str], dict[str, str]]:
