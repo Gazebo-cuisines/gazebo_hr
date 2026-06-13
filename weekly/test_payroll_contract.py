@@ -401,6 +401,58 @@ class EmpAgencyTotalDfTest(unittest.TestCase):
         for col in ("BasicHours", "TotalPaidHours"):
             self.assertAlmostEqual(float(emp[col]) + float(ag[col]), float(tot[col]), places=5)
 
+    def test_split_uses_a_prefix_from_rows(self) -> None:
+        from weekly.payroll_service import agency_categories_from_rows, is_agency_category, split_emp_agency_rows
+
+        rows = [
+            {"Category": "PROD BELT"},
+            {"Category": "A-EL PROD BELT"},
+            {"Category": "A-EL OFCE"},
+            {"Category": "A-EL PROD BELT"},
+        ]
+        self.assertTrue(is_agency_category("A-EL WRHS"))
+        self.assertFalse(is_agency_category("PROD BELT"))
+        self.assertEqual(
+            agency_categories_from_rows(rows),
+            ["A-EL OFCE", "A-EL PROD BELT"],
+        )
+        gazebo, agency = split_emp_agency_rows(rows)
+        self.assertEqual(len(gazebo), 1)
+        self.assertEqual(len(agency), 3)
+
+    def test_monthly_overall_office_includes_ofce_and_a_el_ofce(self) -> None:
+        from .monthly_service import MonthlyEmployeeTotal, _build_overall_totals_from_employee_totals
+
+        totals = [
+            MonthlyEmployeeTotal("OFCE", 10.0, 0.0, 0.0, 0.0, 10.0),
+            MonthlyEmployeeTotal("A-EL OFCE", 5.0, 0.0, 0.0, 0.0, 5.0),
+        ]
+        overall = dict(_build_overall_totals_from_employee_totals(totals))
+        self.assertAlmostEqual(float(overall["OFFICE"].TotalPaidHours), 15.0, places=2)
+
+    def test_monthly_holiday_pay_from_contracted_hours(self) -> None:
+        from .monthly_service import _monthly_employee_from_row
+
+        row = ["TEST USER", "PROD", "100", "35", "0", "0", "0", "45", "40"]
+        employee = _monthly_employee_from_row(
+            row,
+            {
+                "name": 0,
+                "category": 1,
+                "sage": 2,
+                "basic": 3,
+                "mon_fri": 4,
+                "sat_sun": 5,
+                "annual": 6,
+                "total": 7,
+                "contracted": 8,
+                "extra": -1,
+                "holiday_pay": -1,
+            },
+        )
+        self.assertEqual(employee.ExtraHours, 5.0)
+        self.assertEqual(employee.AdditionalHolidayPay, 0.6)
+
 
 class BuildExcelNewSheetsTest(unittest.TestCase):
     def test_workbook_contains_new_sheet_names(self) -> None:
@@ -513,6 +565,7 @@ class BuildExcelNewSheetsTest(unittest.TestCase):
         self.assertEqual(_overall_category_key("TECH TECHNICAL"), "TECH")
         self.assertEqual(_overall_category_key("A-EL TECHNICAL"), "TECH")
         self.assertEqual(_overall_category_key("OFCE"), "OFFICE")
+        self.assertEqual(_overall_category_key("A-EL OFCE"), "OFFICE")
 
     def test_overall_dpch_hours_roll_into_pack_on_fixture(self) -> None:
         with _OVERTIME_EMPLOYEE.open("rb") as ef, _OVERTIME_CONTRACT.open("rb") as cf:

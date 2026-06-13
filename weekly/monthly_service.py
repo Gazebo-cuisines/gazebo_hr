@@ -9,10 +9,14 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from .payroll_service import build_overall_category_totals, compute_extra_holiday_pay, is_agency_category
+
 
 _BAND_KEYS = ("BasicHours", "MonFriOvertime", "SatSunOvertime", "AnnualHoliday", "TotalPaidHours")
+_HOLIDAY_PAY_KEYS = ("ContractedHours", "ExtraHours", "AdditionalHolidayPay")
+_EMPLOYEE_VALUE_KEYS = _BAND_KEYS + _HOLIDAY_PAY_KEYS
 _EMP_AGENCY_ROWS = ("EMP", "AGENCY", "TOTAL")
-_SHEET_LAST_COL = 8
+_SHEET_LAST_COL = 11
 _NUM_FORMAT = "0.00"
 _PRIMARY_BLUE = "003078"
 
@@ -35,6 +39,11 @@ _BAND_LABELS = (
     "Annual holiday",
     "Total paid hours",
 )
+_HOLIDAY_PAY_LABELS = (
+    "Contracted hours",
+    "Extra hours",
+    "Additional holiday pay",
+)
 
 
 @dataclass
@@ -47,6 +56,9 @@ class MonthlyEmployee:
     SatSunOvertime: float
     AnnualHoliday: float
     TotalPaidHours: float
+    ContractedHours: float = 0.0
+    ExtraHours: float = 0.0
+    AdditionalHolidayPay: float = 0.0
     IsHourly: bool = True
 
 
@@ -77,6 +89,15 @@ class MonthlyWeekSummary:
     non_agency_total: float = 0.0
     grouped_totals: dict[str, MonthlyEmployeeTotal] = field(default_factory=dict)
     emp_agency_bands: dict[str, dict[str, float]] = field(default_factory=dict)
+    total_extra_hours: float = 0.0
+    total_additional_holiday_pay: float = 0.0
+
+
+@dataclass
+class HolidayPayLayout:
+    header_row: int
+    rows: dict[str, int]
+    next_row: int
 
 
 @dataclass
@@ -99,6 +120,7 @@ class WeekSheetLayout:
     sheet_name: str
     employee: EmployeeTableLayout
     emp_agency: EmpAgencyLayout
+    holiday_pay: HolidayPayLayout
 
 
 def _to_text(value: Any) -> str:
@@ -130,15 +152,78 @@ def _parse_int(value: Any) -> int:
         return 0
 
 
+def _cell(row: list[str], index: int) -> str:
+    if index < 0 or index >= len(row):
+        return ""
+    return row[index]
+
+
+def _all_data_column_indices(header_row: list[str]) -> dict[str, int]:
+    from .payroll_service import _normalize_header
+
+    by_norm = {_normalize_header(cell): i for i, cell in enumerate(header_row)}
+
+    def col(*names: str) -> int:
+        for name in names:
+            idx = by_norm.get(_normalize_header(name))
+            if idx is not None:
+                return idx
+        return -1
+
+    return {
+        "name": col("name"),
+        "category": col("category"),
+        "sage": col("sageno", "pay id", "pay id (sage)"),
+        "basic": col("basichours", "basic hours"),
+        "mon_fri": col("monfriovertime", "mon fri overtime", "mon–fri overtime"),
+        "sat_sun": col("satsunovertime", "sat sun overtime", "sat/sun overtime"),
+        "annual": col("annualholiday", "annual holiday"),
+        "total": col("totalpaidhours", "actual hours", "total paid hours"),
+        "contracted": col("contractedhours", "contracted hours"),
+        "extra": col("extrahours", "extra hours"),
+        "holiday_pay": col("additionalholidaypay", "additional holiday pay"),
+    }
+
+
+def _monthly_employee_from_row(row: list[str], cols: dict[str, int]) -> MonthlyEmployee:
+    def dec(key: str, fallback: int) -> float:
+        idx = cols.get(key, fallback)
+        return _parse_decimal(_cell(row, idx))
+
+    contracted_idx = cols.get("contracted", -1)
+    extra_idx = cols.get("extra", -1)
+    holiday_idx = cols.get("holiday_pay", -1)
+    contracted = dec("contracted", -1) if contracted_idx >= 0 else 0.0
+    parsed_extra = dec("extra", -1) if extra_idx >= 0 else None
+    parsed_holiday = dec("holiday_pay", -1) if holiday_idx >= 0 else None
+
+    employee = MonthlyEmployee(
+        Name=_to_text(_cell(row, cols.get("name", 0))),
+        Category=_to_text(_cell(row, cols.get("category", 1))),
+        SageNo=_parse_int(_cell(row, cols.get("sage", 2))),
+        BasicHours=dec("basic", 3),
+        MonFriOvertime=dec("mon_fri", 4),
+        SatSunOvertime=dec("sat_sun", 5),
+        AnnualHoliday=dec("annual", 6),
+        TotalPaidHours=dec("total", 7),
+        ContractedHours=contracted,
+    )
+    extra, holiday = compute_extra_holiday_pay(
+        employee.TotalPaidHours,
+        employee.ContractedHours,
+        extra_hours=parsed_extra,
+        additional_holiday_pay=parsed_holiday,
+    )
+    employee.ExtraHours = extra
+    employee.AdditionalHolidayPay = holiday
+    return employee
+
+
 def _grouped_key(category: str) -> str:
     category = _to_text(category)
     if category.startswith("A-") and len(category) >= 9:
         return f"{category[:4]} {category[5:9]}"
     return category[:4] if len(category) >= 4 else category
-
-
-def _is_agency_category(category: str) -> bool:
-    return _to_text(category).upper().startswith("A-")
 
 
 def _empty_bands() -> dict[str, float]:
@@ -149,7 +234,7 @@ def _compute_emp_agency_bands(employees: list[MonthlyEmployee]) -> dict[str, dic
     emp = _empty_bands()
     agency = _empty_bands()
     for e in employees:
-        target = agency if _is_agency_category(e.Category) else emp
+        target = agency if is_agency_category(e.Category) else emp
         target["BasicHours"] += e.BasicHours
         target["MonFriOvertime"] += e.MonFriOvertime
         target["SatSunOvertime"] += e.SatSunOvertime
@@ -197,13 +282,53 @@ def _build_grouped_totals(totals: list[MonthlyEmployeeTotal]) -> dict[str, Month
     return grouped
 
 
+def _employee_totals_to_band_rows(totals: list[MonthlyEmployeeTotal]) -> list[dict[str, Any]]:
+    return [
+        {
+            "Category": t.Category,
+            "BasicHours": t.BasicHours,
+            "MonFriOvertime": t.MonFriOvertime,
+            "SatSunOvertime": t.SatSunOvertime,
+            "AnnualHoliday": t.AnnualHoliday,
+            "TotalPaidHours": t.TotalPaidHours,
+        }
+        for t in totals
+    ]
+
+
+def _build_overall_totals_from_employee_totals(
+    totals: list[MonthlyEmployeeTotal],
+) -> list[tuple[str, MonthlyEmployeeTotal]]:
+    overall_df = build_overall_category_totals(_employee_totals_to_band_rows(totals))
+    if overall_df.empty:
+        return []
+    out: list[tuple[str, MonthlyEmployeeTotal]] = []
+    for _, row in overall_df.iterrows():
+        out.append(
+            (
+                str(row["Category"]),
+                MonthlyEmployeeTotal(
+                    str(row["Category"]),
+                    float(row["BasicHours"]),
+                    float(row["MonFriOvertime"]),
+                    float(row["SatSunOvertime"]),
+                    float(row["AnnualHoliday"]),
+                    float(row["TotalPaidHours"]),
+                ),
+            )
+        )
+    return out
+
+
 def _enrich_week_summary(out: MonthlyWeekSummary) -> None:
     if not out.employee_totals and out.employees:
         out.employee_totals = _employee_totals_from_employees(out.employees)
-    out.non_agency_total = sum(t.TotalPaidHours for t in out.employee_totals if not _is_agency_category(t.Category))
+    out.non_agency_total = sum(t.TotalPaidHours for t in out.employee_totals if not is_agency_category(t.Category))
     if not out.grouped_totals:
         out.grouped_totals = _build_grouped_totals(out.employee_totals)
     out.emp_agency_bands = _compute_emp_agency_bands(out.employees)
+    out.total_extra_hours = round(sum(e.ExtraHours for e in out.employees), 2)
+    out.total_additional_holiday_pay = round(sum(e.AdditionalHolidayPay for e in out.employees), 2)
 
 
 def _workbook_has_all_data(file_obj: Any) -> bool:
@@ -239,27 +364,19 @@ def parse_weekly_gazebo_all_data(
     if header_row < 0:
         return out
 
+    header_cells = text_rows[header_row]
+    cols = _all_data_column_indices(header_cells)
+
     for row in text_rows[header_row + 1 :]:
-        name = _to_text(row[0] if len(row) > 0 else "")
-        col_b = _to_text(row[1] if len(row) > 1 else "")
+        name = _to_text(_cell(row, cols.get("name", 0)))
+        col_b = _to_text(_cell(row, cols.get("category", 1)))
         if not name:
             if col_b.lower() in ("category", "category breakdown (overall)"):
                 break
             break
         if col_b.startswith("Category breakdown"):
             break
-        out.employees.append(
-            MonthlyEmployee(
-                Name=name,
-                Category=col_b,
-                SageNo=_parse_int(row[2] if len(row) > 2 else ""),
-                BasicHours=_parse_decimal(row[3] if len(row) > 3 else ""),
-                MonFriOvertime=_parse_decimal(row[4] if len(row) > 4 else ""),
-                SatSunOvertime=_parse_decimal(row[5] if len(row) > 5 else ""),
-                AnnualHoliday=_parse_decimal(row[6] if len(row) > 6 else ""),
-                TotalPaidHours=_parse_decimal(row[7] if len(row) > 7 else ""),
-            )
-        )
+        out.employees.append(_monthly_employee_from_row(row, cols))
     _enrich_week_summary(out)
     return out
 
@@ -283,15 +400,21 @@ def parse_monthly_week_file(file_obj: Any) -> MonthlyWeekSummary:
         if not _to_text(row[0] if len(row) > 0 else ""):
             break
         out.employees.append(
-            MonthlyEmployee(
-                Name=_to_text(row[0] if len(row) > 0 else ""),
-                Category=_to_text(row[1] if len(row) > 1 else ""),
-                SageNo=_parse_int(row[2] if len(row) > 2 else ""),
-                BasicHours=_parse_decimal(row[3] if len(row) > 3 else ""),
-                MonFriOvertime=_parse_decimal(row[4] if len(row) > 4 else ""),
-                SatSunOvertime=_parse_decimal(row[5] if len(row) > 5 else ""),
-                AnnualHoliday=_parse_decimal(row[6] if len(row) > 6 else ""),
-                TotalPaidHours=_parse_decimal(row[7] if len(row) > 7 else ""),
+            _monthly_employee_from_row(
+                row,
+                {
+                    "name": 0,
+                    "category": 1,
+                    "sage": 2,
+                    "basic": 3,
+                    "mon_fri": 4,
+                    "sat_sun": 5,
+                    "annual": 6,
+                    "total": 7,
+                    "contracted": -1,
+                    "extra": -1,
+                    "holiday_pay": -1,
+                },
             )
         )
         r += 1
@@ -381,6 +504,8 @@ def monthly_summaries_from_json(data: list[dict[str, Any]]) -> list[MonthlyWeekS
             end_date=str(d.get("end_date", "")),
             non_agency_total=float(d.get("non_agency_total", 0.0)),
             emp_agency_bands=dict(d.get("emp_agency_bands") or {}),
+            total_extra_hours=float(d.get("total_extra_hours", 0.0)),
+            total_additional_holiday_pay=float(d.get("total_additional_holiday_pay", 0.0)),
         )
         s.grouped_totals = {}
         for k, v in (d.get("grouped_totals") or {}).items():
@@ -396,7 +521,7 @@ def _set_column_widths(ws) -> None:
     ws.column_dimensions["A"].width = 28
     ws.column_dimensions["B"].width = 18
     ws.column_dimensions["C"].width = 14
-    for col in ("D", "E", "F", "G", "H"):
+    for col in ("D", "E", "F", "G", "H", "I", "J", "K"):
         ws.column_dimensions[col].width = 12
 
 
@@ -463,6 +588,15 @@ def _band_col_index(band_index: int) -> int:
     return 4 + band_index
 
 
+def _employee_value_col_index(value_index: int) -> int:
+    """0-based index into _EMPLOYEE_VALUE_KEYS -> Excel column (D=4)."""
+    return 4 + value_index
+
+
+_EXTRA_HOURS_COL = _employee_value_col_index(_EMPLOYEE_VALUE_KEYS.index("ExtraHours"))
+_HOLIDAY_PAY_COL = _employee_value_col_index(_EMPLOYEE_VALUE_KEYS.index("AdditionalHolidayPay"))
+
+
 def _xl_sumifs_category(row: int, data_start: int, data_end: int, band_col: int) -> str:
     col = get_column_letter(band_col)
     if data_end < data_start:
@@ -519,9 +653,16 @@ def _write_employee_header(ws, r: int) -> None:
         "Category",
         "Pay ID (Sage)",
         *_BAND_LABELS,
+        *_HOLIDAY_PAY_LABELS,
     )
     for i, label in enumerate(labels):
         ws.cell(r, 1 + i, label)
+
+
+def _write_holiday_pay_header(ws, r: int) -> None:
+    ws.cell(r, 2, "Category")
+    ws.cell(r, _EXTRA_HOURS_COL, "Extra hours")
+    ws.cell(r, _HOLIDAY_PAY_COL, "Additional holiday pay")
 
 
 def _write_total_header(ws, r: int) -> None:
@@ -540,11 +681,18 @@ def _write_employee_row(ws, r: int, e: MonthlyEmployee) -> None:
     ws.cell(r, 1, e.Name)
     ws.cell(r, 2, e.Category)
     ws.cell(r, 3, e.SageNo)
-    ws.cell(r, 4, e.BasicHours)
-    ws.cell(r, 5, e.MonFriOvertime)
-    ws.cell(r, 6, e.SatSunOvertime)
-    ws.cell(r, 7, e.AnnualHoliday)
-    ws.cell(r, 8, e.TotalPaidHours)
+    values = (
+        e.BasicHours,
+        e.MonFriOvertime,
+        e.SatSunOvertime,
+        e.AnnualHoliday,
+        e.TotalPaidHours,
+        e.ContractedHours,
+        e.ExtraHours,
+        e.AdditionalHolidayPay,
+    )
+    for i, value in enumerate(values):
+        ws.cell(r, _employee_value_col_index(i), value)
 
 
 def _write_total_row(ws, r: int, category: str, t: MonthlyEmployeeTotal) -> None:
@@ -586,6 +734,108 @@ def _write_emp_agency_block_formulas(
     row_map = {"EMP": emp_row, "AGENCY": agency_row, "TOTAL": total_row}
     _apply_table_style(ws, block_start, total_row, 2, _SHEET_LAST_COL)
     return total_row + 1, row_map
+
+
+def _write_holiday_pay_block_formulas(
+    ws,
+    r: int,
+    emp_layout: EmployeeTableLayout,
+    *,
+    row_label: str | None = None,
+) -> tuple[int, dict[str, int]]:
+    """EMP/AGENCY/TOTAL for extra hours and additional holiday pay (cols J–K)."""
+    block_start = r
+    ds, de = emp_layout.data_start, emp_layout.data_end
+    emp_row = r
+    agency_row = r + 1
+    total_row = r + 2
+
+    if row_label:
+        ws.cell(r, 2, row_label)
+
+    ws.cell(emp_row, 3, "EMP")
+    ws.cell(agency_row, 3, "AGENCY")
+    ws.cell(total_row, 3, "TOTAL")
+
+    for col in (_EXTRA_HOURS_COL, _HOLIDAY_PAY_COL):
+        ws.cell(agency_row, col, _xl_sumproduct_agency(ds, de, col))
+        ws.cell(emp_row, col, _xl_emp_band(ds, de, col, agency_row))
+        ws.cell(total_row, col, _xl_total_band(emp_row, agency_row, col))
+
+    row_map = {"EMP": emp_row, "AGENCY": agency_row, "TOTAL": total_row}
+    _apply_table_style(ws, block_start, total_row, 2, _SHEET_LAST_COL)
+    return total_row + 1, row_map
+
+
+def _write_holiday_pay_section_formulas(
+    ws,
+    r: int,
+    emp_layout: EmployeeTableLayout,
+    section_title: str,
+    subtitle: str,
+    *,
+    row_label: str | None = None,
+) -> HolidayPayLayout:
+    r = _write_section_title(ws, r, section_title, subtitle)
+    header_row = r
+    _write_holiday_pay_header(ws, r)
+    r += 1
+    r, row_map = _write_holiday_pay_block_formulas(ws, r, emp_layout, row_label=row_label)
+    _apply_table_style(ws, header_row, header_row, 2, _SHEET_LAST_COL, header_row=header_row)
+    return HolidayPayLayout(header_row=header_row, rows=row_map, next_row=r + 1)
+
+
+def _write_holiday_pay_block_week_refs(
+    ws,
+    r: int,
+    week_layout: WeekSheetLayout,
+    *,
+    row_label: str | None = None,
+) -> int:
+    block_start = r
+    for i, key in enumerate(_EMP_AGENCY_ROWS):
+        if row_label and i == 0:
+            ws.cell(r, 2, row_label)
+        ws.cell(r, 3, key)
+        src_row = week_layout.holiday_pay.rows[key]
+        for col in (_EXTRA_HOURS_COL, _HOLIDAY_PAY_COL):
+            ws.cell(r, col, f"='{week_layout.sheet_name}'!{get_column_letter(col)}{src_row}")
+        r += 1
+    _apply_table_style(ws, block_start, r - 1, 2, _SHEET_LAST_COL)
+    return r
+
+
+def _write_holiday_pay_section_monthly_formulas(
+    ws,
+    r: int,
+    week_layouts: list[WeekSheetLayout],
+    section_title: str,
+    subtitle: str,
+) -> tuple[int, HolidayPayLayout]:
+    r = _write_section_title(ws, r, section_title, subtitle)
+    header_row = r
+    _write_holiday_pay_header(ws, r)
+    r += 1
+    block_start = r
+    ws.cell(r, 2, "MONTHLY")
+    row_map: dict[str, int] = {}
+    for key in _EMP_AGENCY_ROWS:
+        row_map[key] = r
+        ws.cell(r, 3, key)
+        for col in (_EXTRA_HOURS_COL, _HOLIDAY_PAY_COL):
+            ws.cell(
+                r,
+                col,
+                "="
+                + "+".join(
+                    f"'{layout.sheet_name}'!{get_column_letter(col)}{layout.holiday_pay.rows[key]}"
+                    for layout in week_layouts
+                ),
+            )
+        r += 1
+    _apply_table_style(ws, block_start, r - 1, 2, _SHEET_LAST_COL)
+    _apply_table_style(ws, header_row, header_row, 2, _SHEET_LAST_COL, header_row=header_row)
+    return r + 1, HolidayPayLayout(header_row=header_row, rows=row_map, next_row=r + 1)
 
 
 def _write_emp_agency_block(
@@ -742,8 +992,8 @@ def _write_employee_table_cross_week(
         ws.cell(r, 2, e.Category)
         ws.cell(r, 3, e.SageNo)
         name_ref = f"$A{r}"
-        for j in range(5):
-            ws.cell(r, _band_col_index(j), _xl_cross_week_sumif(name_ref, week_sheet_names, _band_col_index(j)))
+        for j in range(len(_EMPLOYEE_VALUE_KEYS)):
+            ws.cell(r, _employee_value_col_index(j), _xl_cross_week_sumif(name_ref, week_sheet_names, _employee_value_col_index(j)))
         r += 1
     data_end = r - 1 if employees else data_start - 1
     if employees:
@@ -945,6 +1195,14 @@ def build_monthly_excel_bytes(
             "Grouped totals (by category prefix)",
             "Categories rolled up to 4-character groups.",
         )
+        overall_rows = _build_overall_totals_from_employee_totals(s.employee_totals)
+        r = _write_totals_table(
+            ws,
+            r,
+            overall_rows,
+            "Category breakdown (overall)",
+            "Hours by department — Gazebo and agency combined (PROD, PACK, WRHS, CLNR, TECH, OFFICE).",
+        )
         emp_agency = _write_emp_agency_section_formulas(
             ws,
             r,
@@ -952,7 +1210,21 @@ def build_monthly_excel_bytes(
             "Gazebo vs agency summary",
             "EMP = Gazebo staff; AGENCY = A- categories; TOTAL = both (formulas from employee table).",
         )
-        week_layouts.append(WeekSheetLayout(sheet_name=sheet_name, employee=emp_layout, emp_agency=emp_agency))
+        holiday_pay = _write_holiday_pay_section_formulas(
+            ws,
+            emp_agency.next_row,
+            emp_layout,
+            "Additional holiday pay",
+            "Extra hours = actual − contracted; additional holiday pay = 0.1207 × extra hours (weekly report rules).",
+        )
+        week_layouts.append(
+            WeekSheetLayout(
+                sheet_name=sheet_name,
+                employee=emp_layout,
+                emp_agency=emp_agency,
+                holiday_pay=holiday_pay,
+            )
+        )
         grouped_from_weeks.append(s.grouped_totals)
 
     merged_employees: dict[str, MonthlyEmployee] = {}
@@ -968,6 +1240,9 @@ def build_monthly_excel_bytes(
             cur.SatSunOvertime += e.SatSunOvertime
             cur.AnnualHoliday += e.AnnualHoliday
             cur.TotalPaidHours += e.TotalPaidHours
+            cur.ContractedHours += e.ContractedHours
+            cur.ExtraHours += e.ExtraHours
+            cur.AdditionalHolidayPay += e.AdditionalHolidayPay
             cur.SageNo = e.SageNo
             cur.Category = e.Category
 
@@ -986,7 +1261,7 @@ def build_monthly_excel_bytes(
     for e in merged_employees.values():
         if e.Name.strip().upper() in non_hourly_names:
             e.IsHourly = False
-        if not e.IsHourly and e.Category.strip().startswith("A-"):
+        if not e.IsHourly and is_agency_category(e.Category):
             raise ValueError(f"Agency employee cannot be non-hourly: {e.Name}")
 
     week_sheet_names = [wl.sheet_name for wl in week_layouts]
@@ -1030,6 +1305,14 @@ def build_monthly_excel_bytes(
         "Grouped totals (month)",
         "Categories rolled up to 4-character groups across all weeks.",
     )
+    overall_rows = _build_overall_totals_from_employee_totals(list(merged_totals.values()))
+    r = _write_totals_table(
+        ws,
+        r,
+        overall_rows,
+        "Category breakdown (overall)",
+        "Month total by department — Gazebo and agency combined (PROD, PACK, WRHS, CLNR, TECH, OFFICE).",
+    )
 
     if week_layouts:
         r, monthly_layout = _write_emp_agency_section_monthly_formulas(
@@ -1038,6 +1321,22 @@ def build_monthly_excel_bytes(
             week_layouts,
             "Month total — Gazebo vs agency",
             "Sum of weekly EMP/AGENCY/TOTAL rows across all uploaded weeks.",
+        )
+
+        r, _monthly_holiday_layout = _write_holiday_pay_section_monthly_formulas(
+            ws,
+            r,
+            week_layouts,
+            "Month total — additional holiday pay",
+            "Sum of weekly extra hours and additional holiday pay (EMP / AGENCY / TOTAL).",
+        )
+
+        holiday_pay = _write_holiday_pay_section_formulas(
+            ws,
+            r,
+            summary_emp_layout,
+            "Merged additional holiday pay",
+            "Recalculated from merged employee rows using the same weekly rules.",
         )
 
         r = _write_section_title(
@@ -1052,6 +1351,21 @@ def build_monthly_excel_bytes(
             _write_total_header(ws, r)
             r += 1
             r = _write_emp_agency_block_week_refs(ws, r, layout, row_label=label)
+            _apply_table_style(ws, header_row, header_row, 2, _SHEET_LAST_COL, header_row=header_row)
+            r += 1
+
+        r = _write_section_title(
+            ws,
+            r,
+            "Per-week additional holiday pay",
+            "Each row references the matching EMP/AGENCY/TOTAL cells on the Week sheet.",
+        )
+        for wi, layout in enumerate(week_layouts):
+            label = "Weekly" if wi == 0 else None
+            header_row = r
+            _write_holiday_pay_header(ws, r)
+            r += 1
+            r = _write_holiday_pay_block_week_refs(ws, r, layout, row_label=label)
             _apply_table_style(ws, header_row, header_row, 2, _SHEET_LAST_COL, header_row=header_row)
             r += 1
 

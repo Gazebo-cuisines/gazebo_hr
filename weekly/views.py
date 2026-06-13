@@ -14,7 +14,6 @@ from .monthly_service import (
 	parse_monthly_inputs,
 )
 from .payroll_service import (
-	AGENCY_CATEGORIES,
 	PayrollResult,
 	_HOUR_BAND_COLS,
 	_sum_hour_bands,
@@ -22,7 +21,9 @@ from .payroll_service import (
 	build_excel_bytes,
 	calculate_payroll,
 	calculate_weekly_payroll,
+	is_agency_category,
 	parse_employee_hours,
+	split_emp_agency_rows,
 	total_paid_hours_from_rows,
 )
 from .case_studies_data import CASE_STUDIES, get_case_study
@@ -103,8 +104,7 @@ def weekly_analytics_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any] | N
 			)
 	over_60.sort(key=lambda x: x['TotalPaidHours'], reverse=True)
 
-	gazebo_rows = [r for r in rows if str(r.get('Category', '')).strip().upper() not in AGENCY_CATEGORIES]
-	agency_rows = [r for r in rows if str(r.get('Category', '')).strip().upper() in AGENCY_CATEGORIES]
+	gazebo_rows, agency_rows = split_emp_agency_rows(rows)
 	emp_totals = _sum_hour_bands(gazebo_rows)
 	ag_totals = _sum_hour_bands(agency_rows)
 	cat_labels, cat_hours, cat_counts = _rollup_categories(rows)
@@ -418,6 +418,7 @@ def _monthly_context(session_blob: dict) -> dict:
 	total_paid_hours = 0.0
 	total_employee_rows = 0
 	total_non_agency = 0.0
+	total_additional_holiday_pay = 0.0
 	for idx, s in enumerate(summaries, start=1):
 		week_total = sum(float(t.TotalPaidHours) for t in s.employee_totals)
 		week_cards.append({
@@ -432,6 +433,7 @@ def _monthly_context(session_blob: dict) -> dict:
 		})
 		total_paid_hours += week_total
 		total_non_agency += float(s.non_agency_total or 0.0)
+		total_additional_holiday_pay += float(s.total_additional_holiday_pay or 0.0)
 		total_employee_rows += len(s.employees)
 		for t in s.employee_totals:
 			cur = merged_totals.setdefault(
@@ -479,6 +481,7 @@ def _monthly_context(session_blob: dict) -> dict:
 		'summary_stats': {
 			'total_paid_hours': round(total_paid_hours, 2),
 			'non_agency_total': round(total_non_agency, 2),
+			'total_additional_holiday_pay': round(total_additional_holiday_pay, 2),
 			'employee_rows': total_employee_rows,
 		},
 	}
@@ -517,7 +520,7 @@ def monthly_report(request: HttpRequest):
 			non_hourly = _parse_non_hourly_names(request.POST.get('non_hourly_names', ''))
 			for s in summaries:
 				for e in s.employees:
-					if e.Name.strip().upper() in non_hourly and e.Category.strip().startswith('A-'):
+					if e.Name.strip().upper() in non_hourly and is_agency_category(e.Category):
 						messages.error(request, f'Agency employee must be hourly: {e.Name}')
 						return redirect('weekly:monthly_report')
 			request.session['monthly_last'] = {
@@ -593,8 +596,7 @@ def download_daily_excel(request: HttpRequest):
 		messages.error(request, 'No processed data available. Upload files first.')
 		return redirect('weekly:daily_report')
 
-	agency_rows = [r for r in rows if str(r.get('Category', '')).strip().upper() in AGENCY_CATEGORIES]
-	gazebo_rows = [r for r in rows if str(r.get('Category', '')).strip().upper() not in AGENCY_CATEGORIES]
+	gazebo_rows, agency_rows = split_emp_agency_rows(rows)
 	payroll_result = PayrollResult(
 		rows=rows,
 		agency_rows=agency_rows,
@@ -650,8 +652,7 @@ def download_weekly_excel(request: HttpRequest):
 		messages.error(request, 'No processed data available. Upload files first.')
 		return redirect('weekly:weekly_report')
 
-	agency_rows = [r for r in rows if str(r.get('Category', '')).strip().upper() in AGENCY_CATEGORIES]
-	gazebo_rows = [r for r in rows if str(r.get('Category', '')).strip().upper() not in AGENCY_CATEGORIES]
+	gazebo_rows, agency_rows = split_emp_agency_rows(rows)
 	payroll_result = PayrollResult(
 		rows=rows,
 		agency_rows=agency_rows,
