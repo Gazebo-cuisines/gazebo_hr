@@ -36,7 +36,7 @@ CASE_STUDIES: list[dict[str, Any]] = [
             {
                 "heading": "Why this happens (exception case)",
                 "body": [
-                    "The weekly report joins Pay ID from the hours file to Payroll Number / Sage Pay Ref in the Employee Details (Advanced) export.",
+                    "The daily report joins Pay ID from the hours file to Payroll Number / Sage Pay Ref in the Employee Details (Advanced) export.",
                     "When a new employee joins, HR may hold or delay setting them up in ClockRite Employee Details.",
                     "Until they appear in that export, their Pay ID will not be in the contract hours file — even if they already have hours in the Paid Hours summary.",
                     "The current implementation is correct; this is a data timing gap between the two exports, not a parsing error.",

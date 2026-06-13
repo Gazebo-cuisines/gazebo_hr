@@ -2,15 +2,15 @@
 	<p class="side-nav__title">Reports</p>
 	<ul class="side-nav__list">
 		<li>
+			<a class="side-nav__link{% if request.resolver_match.url_name == 'daily_report' %} side-nav__link--current{% endif %}" href="{% url 'weekly:daily_report' %}">Daily report</a>
+		</li>
+		<li class="side-nav__item">
 			<a class="side-nav__link{% if request.resolver_match.url_name == 'weekly_report' %} side-nav__link--current{% endif %}" href="{% url 'weekly:weekly_report' %}">Weekly report</a>
 		</li>
 		<li>
 			<a class="side-nav__link{% if request.resolver_match.url_name == 'monthly_report' %} side-nav__link--current{% endif %}" href="{% url 'weekly:monthly_report' %}">Monthly report</a>
 		</li>
-		<li>
-			<a class="side-nav__link{% if request.resolver_match.url_name == 'employee_hour_contracts' %} side-nav__link--current{% endif %}" href="{% url 'weekly:employee_hour_contracts' %}">Employee hour contracts</a>
-		</li>
-		<li>
+				<li>
 			<a class="side-nav__link{% if request.resolver_match.url_name == 'case_studies' or request.resolver_match.url_name == 'case_study_detail' %} side-nav__link--current{% endif %}" href="{% url 'weekly:case_studies' %}">Case studies</a>
 		</li>
 	</ul>

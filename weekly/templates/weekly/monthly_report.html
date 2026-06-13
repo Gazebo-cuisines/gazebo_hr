@@ -1,7 +1,7 @@
 {% extends "weekly/dashboard_base.html" %}
 {% block dashboard_content %}
 <h1 class="heading-xl">{{ page_heading }}</h1>
-<p class="lead">Upload four (or five) weekly workbooks (legacy week layout or <strong>Download Excel</strong> from the weekly report — <code>All Data</code> sheet), then download a combined monthly workbook.</p>
+<p class="lead">Upload four (or five) daily workbooks — <strong>Download Excel</strong> from the Daily report (<code>gazebo_daily_report_*.xlsx</code>, <code>All Data</code> sheet) or legacy week layout (.xls) — then download the combined monthly workbook.</p>
 <p class="text-secondary small" style="max-width:40rem">
 	<button type="button" class="btn btn-link p-0 align-baseline" id="btn-monthly-help" data-bs-toggle="modal" data-bs-target="#monthlyHelpModal">How the monthly report works (overview)</button>
 	— <span class="text-body-secondary">Each input is a <strong>weekly</strong> output workbook (xls/xlsx). Click <strong>Help</strong> next to any field.</span>
@@ -16,7 +16,7 @@
 			</div>
 			<div class="modal-body help-prose" tabindex="-1">
 				<ol class="ps-3 mb-0">
-					<li class="mb-2">You upload <strong>4 or 5</strong> weekly report workbooks (output of the Weekly report page).</li>
+					<li class="mb-2">You upload <strong>4 or 5</strong> daily report workbooks (output of the Daily report page).</li>
 					<li class="mb-2">Each workbook is parsed for its <strong>employees</strong>, <strong>adjustments</strong>, <strong>category totals</strong> and <strong>date range</strong>.</li>
 					<li class="mb-2">Optionally paste <strong>non-hourly</strong> employee names (one per line) — these are subtracted on the Summary sheet. Agency (<code>A-…</code>) names cannot be non-hourly and will be rejected.</li>
 					<li class="mb-2">Click <strong>Process files</strong> to validate and store the data in your session.</li>
@@ -35,9 +35,9 @@
 				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close help"></button>
 			</div>
 			<div class="modal-body help-prose small" tabindex="-1">
-				<p class="mb-2"><span class="fw-bold text-body">What it is</span> — the xls/xlsx produced by the <strong>Weekly report</strong> page (<em>Download Excel</em> on that screen). One file per week.</p>
+				<p class="mb-2"><span class="fw-bold text-body">What it is</span> — the xls/xlsx produced by the <strong>Daily report</strong> page (<em>Download Excel</em> on that screen). One file per week. Typical name: <code>gazebo_daily_report_YYYYMMDD-HHMM.xlsx</code>.</p>
 				<p class="mb-2"><span class="fw-bold text-body">Gazebo weekly export</span> — open sheet <strong>All Data</strong>: row 1 is the header; employee rows follow until a blank name. Category blocks at the bottom are ignored (totals are recomputed).</p>
-				<p class="mb-2"><span class="fw-bold text-body">Legacy layout</span> — row 1 has <strong>Start/End Date</strong>; row 3 header; employees; <strong>Adjustments</strong>; <strong>Category</strong> totals.</p>
+				<p class="mb-2"><span class="fw-bold text-body">Legacy layout</span> — older <code>.xls</code> week files without an <strong>All Data</strong> sheet: row 1 has <strong>Start/End Date</strong>; row 3 header; employees; <strong>Adjustments</strong>; <strong>Category</strong> totals. Still supported.</p>
 				<p class="mb-0"><span class="fw-bold text-body">Dates</span> — optional start/end per week below (recommended for Gazebo exports).</p>
 				<p class="mb-0"><span class="fw-bold text-body">Order matters</span> — upload Week 1 → Week 2 → Week 3 → Week 4 (→ Week 5). Week 5 is optional; tick the box to require it.</p>
 			</div>

@@ -99,21 +99,21 @@
 {% block dashboard_content %}
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-1">
 	<h1 class="heading-xl mb-0">{{ page_heading }}</h1>
-	<a href="{% url 'weekly:weekly_help' %}" class="btn btn-outline-primary btn-sm" target="_blank" rel="noopener">
+	<a href="{% url 'weekly:daily_help' %}" class="btn btn-outline-primary btn-sm" target="_blank" rel="noopener">
 		<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:4px"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
 		How to use this report
 	</a>
 </div>
 <p class="lead">Upload employee-hours and contracted-hours files, run calculations, and export the result as Excel.</p>
 <p class="text-secondary small" style="max-width:36rem">
-	<button type="button" class="btn btn-link p-0 align-baseline" id="btn-weekly-help" data-bs-toggle="modal" data-bs-target="#weeklyHelpModal">How the report works (overview)</button> — <span class="text-body-secondary">For the full step-by-step procedure, open <a href="{% url 'weekly:weekly_help' %}" target="_blank" rel="noopener">How to use this report</a>.</span>
+	<button type="button" class="btn btn-link p-0 align-baseline" id="btn-weekly-help" data-bs-toggle="modal" data-bs-target="#weeklyHelpModal">How the report works (overview)</button> — <span class="text-body-secondary">For the full step-by-step procedure, open <a href="{% url 'weekly:daily_help' %}" target="_blank" rel="noopener">How to use this report</a>.</span>
 </p>
 
 <div class="modal fade" id="weeklyHelpModal" data-bs-backdrop="false" data-bs-keyboard="true" tabindex="-1" aria-labelledby="weeklyHelpModalLabel" aria-hidden="true">
 	<div class="modal-dialog modal-lg modal-dialog-scrollable">
 		<div class="modal-content">
 			<div class="modal-header">
-				<h2 class="modal-title h5" id="weeklyHelpModalLabel">How the weekly report works</h2>
+				<h2 class="modal-title h5" id="weeklyHelpModalLabel">How the daily report works</h2>
 				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close help"></button>
 			</div>
 			<div class="modal-body help-prose" id="weekly-help-prose" tabindex="-1">
@@ -122,9 +122,8 @@
 					<li class="mb-2">The app reads the employee file and builds one row per person, using <strong>Pay ID</strong> (same as <strong>Sage number</strong> / SageNo in the report).</li>
 					<li class="mb-2">It reads the contract file and finds each person&rsquo;s <strong>Payroll number</strong> and <strong>Contract hours</strong> (or columns in a single header row if you use a flat table export).</li>
 					<li class="mb-2">It <strong>joins</strong> the two: <code>Pay ID = Payroll number</code>. If no payroll number is found, it may fall back to matching on <strong>name</strong> (check <strong>Contract match</strong> in the output). If match is <strong>No</strong>, see <a href="{% url 'weekly:case_study_detail' case_id='contract-match-no' %}">Case study: Contract hours not matching</a>.</li>
-					<li class="mb-2">It calculates <strong>Extra hours</strong> = total paid hours minus contracted hours (never negative), and <strong>Additional holiday pay</strong> = 0.12 &times; extra hours.</li>
-					<li class="mb-2">Actual and contracted hours are never shown below zero.</li>
-					<li class="mb-0">It splits employees into <strong>agency</strong> vs <strong>Gazebo</strong> categories for analysis. You can <strong>Download Excel</strong> for a full workbook (all data, not only the on-screen preview).</li>
+					<li class="mb-2">It calculates <strong>Overtime</strong> = total paid hours minus contracted hours, and splits employees into <strong>agency</strong> vs <strong>Gazebo</strong> categories for analysis.</li>
+					<li class="mb-0">You can <strong>Download Excel</strong> for a full workbook (all data, not only the on-screen preview).</li>
 				</ol>
 			</div>
 		</div>
@@ -215,7 +214,7 @@
 	<div class="processing-overlay__card">
 		<div class="processing-overlay__spinner" aria-hidden="true"></div>
 		<div class="processing-overlay__title">Processing your files</div>
-		<div class="processing-overlay__sub">Reading spreadsheets, joining contracts, calculating extra hours and holiday pay…<br>This usually takes a few seconds.</div>
+		<div class="processing-overlay__sub">Reading spreadsheets, joining contracts, calculating overtime…<br>This usually takes a few seconds.</div>
 	</div>
 </div>
 
@@ -242,7 +241,7 @@
 			<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" class="me-1"><path d="M4 11H2v3h2v-3zm5-4H7v7h2V7zm5-5v12h-2V2h2zM2 10a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1H2zm5-4a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1H7zm5-5a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1h-2z"/></svg>
 			<span class="btn-toggle-charts__label">View graphs</span>
 		</button>
-		<form method="post" action="{% url 'weekly:weekly_clear_results' %}" class="d-inline" onsubmit="return confirm('Clear the saved results from this page? You can process new files anytime.');">
+		<form method="post" action="{% url 'weekly:daily_clear_results' %}" class="d-inline" onsubmit="return confirm('Clear the saved results from this page? You can process new files anytime.');">
 			{% csrf_token %}
 			<button type="submit" class="btn btn-outline-danger btn-sm">Clear results</button>
 		</form>
@@ -252,9 +251,9 @@
 				Export data
 			</button>
 			<ul class="dropdown-menu dropdown-menu-end">
-				<li><a class="dropdown-item" href="{% url 'weekly:weekly_download' %}">Excel (.xlsx)</a></li>
-				<li><a class="dropdown-item" href="{% url 'weekly:weekly_download_csv' %}">CSV (.csv)</a></li>
-				<li><a class="dropdown-item" href="{% url 'weekly:weekly_download_pdf' %}">PDF (.pdf)</a></li>
+				<li><a class="dropdown-item" href="{% url 'weekly:daily_download' %}">Excel (.xlsx)</a></li>
+				<li><a class="dropdown-item" href="{% url 'weekly:daily_download_csv' %}">CSV (.csv)</a></li>
+				<li><a class="dropdown-item" href="{% url 'weekly:daily_download_pdf' %}">PDF (.pdf)</a></li>
 			</ul>
 		</div>
 	</div>
@@ -400,8 +399,7 @@
 						<th scope="col">AnnualHoliday</th>
 						<th scope="col">TotalPaidHours</th>
 						<th scope="col">ContractedHours</th>
-						<th scope="col">ExtraHours</th>
-						<th scope="col">AdditionalHolidayPay</th>
+						<th scope="col">Overtime</th>
 						<th scope="col">Contract match</th>
 						<th scope="col">Match reason</th>
 					</tr>
@@ -418,8 +416,7 @@
 						<td class="text-end">{{ row.AnnualHoliday|floatformat:2 }}</td>
 						<td class="text-end">{{ row.TotalPaidHours|floatformat:2 }}</td>
 						<td class="text-end">{{ row.ContractedHours|floatformat:2 }}</td>
-						<td class="text-end">{{ row.ExtraHours|floatformat:2 }}</td>
-						<td class="text-end">{{ row.AdditionalHolidayPay|floatformat:2 }}</td>
+						<td class="text-end">{{ row.Overtime|floatformat:2 }}</td>
 						<td>{{ row.ContractHourMatch }}</td>
 						<td>{{ row.ContractMatchReason }}</td>
 					</tr>

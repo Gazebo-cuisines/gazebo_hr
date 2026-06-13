@@ -32,10 +32,10 @@
 {% block dashboard_content %}
 <div class="help-page">
 	<button type="button" class="btn btn-outline-secondary btn-sm help-print-btn" onclick="window.print()">Print / Save as PDF</button>
-	<a class="help-back small" href="{% url 'weekly:weekly_report' %}">&larr; Back to Weekly report</a>
+	<a class="help-back small" href="{% url 'weekly:daily_report' %}">&larr; Back to Daily report</a>
 
-	<h1 class="heading-xl mt-2">Weekly Report — How to use</h1>
-	<p class="lead">A short procedure for running the weekly payroll report on
+	<h1 class="heading-xl mt-2">Daily Report — How to use</h1>
+	<p class="lead">A short procedure for running the daily payroll report on
 		<a href="https://gazeboo.cloud">gazeboo.cloud</a>.</p>
 
 	<h2>1. Sign in</h2>
@@ -71,7 +71,7 @@
 
 	<h2>3. Upload and process</h2>
 	<ol>
-		<li>From the dashboard, click <strong>Weekly report</strong>.</li>
+		<li>From the dashboard, click <strong>Daily report</strong>.</li>
 		<li><strong>Employee hours file</strong> &rarr; choose File A.</li>
 		<li><strong>Contract hours file</strong> &rarr; choose File B.</li>
 		<li>Click <strong>Process files</strong>.</li>
@@ -79,14 +79,7 @@
 	</ol>
 	<p>If a file is wrong or missing a column, an error banner appears at the top &mdash; fix the file and try again.</p>
 
-	<h2>4. Weekly calculations</h2>
-	<ul>
-		<li><strong>Extra hours</strong> = total paid hours minus contracted hours (minimum zero).</li>
-		<li><strong>Additional holiday pay</strong> = 0.12 &times; extra hours.</li>
-		<li>Actual and contracted hours are never shown below zero.</li>
-	</ul>
-
-	<h2>5. Review the results</h2>
+	<h2>4. Review the results</h2>
 	<p>Once processing finishes you&rsquo;ll see, top-down:</p>
 	<ul>
 		<li>A <strong>summary toolbar</strong> with: total rows, agency, Gazebo, total paid hours.</li>
@@ -98,7 +91,7 @@
 		The full result is <strong>always</strong> in the export &mdash; the on-screen table only previews the first 200 rows.
 	</div>
 
-	<h2>6. Export</h2>
+	<h2>5. Export</h2>
 	<p>Click <strong>Export data</strong> and pick a format:</p>
 	<div class="table-responsive">
 		<table class="table table-bordered align-top">
@@ -124,9 +117,9 @@
 			</tbody>
 		</table>
 	</div>
-	<p class="small text-secondary">Filenames are stamped with date + time, e.g. <code>gazebo_weekly_report_20260501-1530.xlsx</code>.</p>
+	<p class="small text-secondary">Filenames are stamped with date + time, e.g. <code>gazebo_daily_report_20260501-1530.xlsx</code>.</p>
 
-	<h2>7. Run again</h2>
+	<h2>6. Run again</h2>
 	<p>To process a new week, simply upload two new files and click <strong>Process files</strong> again &mdash; the previous result is replaced.</p>
 	<p>To sign out, use <strong>Sign out</strong> in the top-right corner.</p>
 
@@ -150,7 +143,7 @@
 	</div>
 
 	<p class="mt-4">
-		<a class="btn btn-primary" href="{% url 'weekly:weekly_report' %}">Open Weekly report</a>
+		<a class="btn btn-primary" href="{% url 'weekly:daily_report' %}">Open Daily report</a>
 		<button type="button" class="btn btn-outline-secondary" onclick="window.print()">Print / Save as PDF</button>
 	</p>
 </div>

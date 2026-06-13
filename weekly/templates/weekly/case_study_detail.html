@@ -70,7 +70,7 @@
 	<p class="case-study-detail__lead">{{ case.summary }}</p>
 
 	<div class="case-study-callout">
-		<strong>Exception, not a bug.</strong> The current weekly report implementation is fine for normal use.
+		<strong>Exception, not a bug.</strong> The current daily report implementation is fine for normal use.
 		This article describes a known data-timing situation between the two ClockRite exports.
 	</div>
 
@@ -95,7 +95,7 @@
 
 	<p class="mt-4">
 		<a class="btn btn-outline-primary btn-sm" href="{% url 'weekly:case_studies' %}">&larr; Back to case studies</a>
-		<a class="btn btn-primary btn-sm" href="{% url 'weekly:weekly_report' %}">Open weekly report</a>
+		<a class="btn btn-primary btn-sm" href="{% url 'weekly:daily_report' %}">Open daily report</a>
 	</p>
 </article>
 {% endblock %}

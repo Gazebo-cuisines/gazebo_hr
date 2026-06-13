@@ -3,6 +3,17 @@
 A short procedure for running the weekly payroll report on
 [gazeboo.cloud](https://gazeboo.cloud).
 
+## Weekly report vs Daily report
+
+| | **Weekly report** | **Daily report** |
+| --- | --- | --- |
+| Use for | Extra hours + **additional holiday pay** (0.12 × extra) | Overtime only |
+| Export file | `gazebo_weekly_report_*.xlsx` | `gazebo_daily_report_*.xlsx` |
+| Key columns | Actual hours, Contracted hours, Extra hours, Additional Holiday pay | Overtime |
+| Monthly report input | No — monthly uses **daily** exports | Yes |
+
+Use **Weekly report** when HR needs Amit’s additional holiday pay calculation. Use **Daily report** for the existing overtime workflow and monthly roll-up.
+
 ## 1. Sign in
 
 1. Open <https://gazeboo.cloud/login/>.
@@ -13,7 +24,7 @@ A short procedure for running the weekly payroll report on
 ## 2. Get the two input files from ClockRite
 
 You need **two** Excel files exported from ClockRite. Both are
-**Excel 7.0 (.xls)**.
+**Excel 7.0 (.xls)** — the same files as the daily report.
 
 ### File A — Employee hours file
 
@@ -34,7 +45,7 @@ You need **two** Excel files exported from ClockRite. Both are
 
 ## 3. Upload and process
 
-1. From the dashboard, click **Weekly report**.
+1. From the dashboard, click **Weekly report** (not Daily report).
 2. **Employee hours file** → choose File A.
 3. **Contract hours file** → choose File B.
 4. Click **Process files**.
@@ -44,36 +55,64 @@ You need **two** Excel files exported from ClockRite. Both are
 If a file is wrong or missing a column, an error banner appears at the
 top — fix the file and try again.
 
-## 4. Review the results
+## 4. Weekly calculations
+
+For each employee row:
+
+- **Actual hours** = total paid hours from the time file (never below zero).
+- **Contracted hours** = from the contract export (never below zero).
+- **Extra hours** = actual minus contracted (minimum zero).
+- **Additional Holiday pay** = **0.12 × extra hours** (decimal hours, e.g. 1.2).
+
+Examples (matching the director’s test sheet):
+
+| Actual | Contract | Extra | Additional Holiday pay |
+| ------ | -------- | ----- | ---------------------- |
+| 50 | 40 | 10 | 1.2 |
+| 16 | 8 | 8 | 0.96 |
+| 20 | 10 | 10 | 1.2 |
+| 30 | 40 | 0 | 0 |
+
+This is **separate** from normal **Annual holiday** (28-day entitlement HR manages in ClockRite).
+
+## 5. Review the results
 
 Once processing finishes you'll see, top-down:
 
 - A **summary toolbar** with: total rows, agency, Gazebo, total paid hours.
-- **View graphs** button — click to expand charts:
-  hours distribution, 60+ hours table, EMP vs Agency, etc.
+- **View graphs** button — click to expand charts.
 - **Export data** button — drop-down with **Excel / CSV / PDF**.
-- A **scrollable data table** with filter (Category) and search.
+- A **scrollable data table** with **ExtraHours** and
+  **AdditionalHolidayPay** columns (preview of first 200 rows).
 
-The full result is **always** in the export — the on-screen table only
-previews the first 200 rows.
+The full result is **always** in the export.
 
-## 5. Export
+## 6. Export
 
-Click **Export data** and pick a format:
+Click **Export data** and pick a format. Confirm the filename starts with
+**`gazebo_weekly_report_`** (not `gazebo_daily_report_`).
 
 | Format | Best for | Includes |
 | ------ | -------- | -------- |
-| **Excel** | Internal HR use, further calcs | Branded "Cover" sheet + All Data, Agency, Gazebo, Analysis, EMP Agency Total, Category summary, Hours over 60 |
-| **CSV** | Importing to other systems | Brand + generated date metadata, then headers + all rows |
-| **PDF** | Sharing / printing | Branded landscape page, summary line, full table, footer with brand + page number |
+| **Excel** | Internal HR use, Sage prep | Cover sheet + **All Data** with Actual hours, Contracted hours, Extra hours, Additional Holiday pay |
+| **CSV** | Importing to other systems | HR-friendly headers + all rows |
+| **PDF** | Sharing / printing | Branded landscape page, full table |
+
+In Excel, open sheet **All Data** and scroll right past **Contracted hours**
+to see **Extra hours** and **Additional Holiday pay**.
 
 Filenames are stamped with date + time, e.g.
 `gazebo_weekly_report_20260501-1530.xlsx`.
 
-## 6. Run again
+> **Monthly report** still uses **Daily report** exports
+> (`gazebo_daily_report_*.xlsx`), not weekly exports. Sum weekly
+> **Additional Holiday pay** manually for monthly Sage payment until a
+> monthly rollup is added.
 
-To process a new week, simply upload two new files and click
-**Process files** again — the previous result is replaced.
+## 7. Run again
+
+To process a new week, upload two new files and click **Process files**
+again — the previous result is replaced.
 
 To sign out, use **Sign out** in the top-right corner.
 
@@ -84,8 +123,9 @@ To sign out, use **Sign out** in the top-right corner.
 | Problem | What to do |
 | ------- | ---------- |
 | "No processed data available" when clicking Export | Upload and process the two files first. |
-| Wrong people in the result | Check that **Pay ID** in the employee file matches **Payroll number** in the contract file. |
-| **Contract match** = **No** | That Pay ID is **not** in the contract export (often new joiners — HR may hold setup). Re-export **Employee Details (Advanced)** after HR releases them. See **Case studies** in the app nav. Contact **HR**, then the **Developer** if both exports contain the Pay ID but match stays No. Column **ContractMatchReason** shows e.g. `Pay ID not in contract export`. |
-| Numbers look off for one person | Check that ClockRite export type is the right one (see step 2). Re-export and try again. |
+| No **Additional Holiday pay** column in export | You exported from **Daily report** — use **Weekly report** instead. |
+| Wrong people in the result | Check that **Pay ID** matches **Payroll number** in the contract file. |
+| **Contract match** = **No** | Pay ID missing from contract export — see **Case studies** in the app nav. |
+| Extra hours look wrong | Check actual and contracted hours; both clamp to zero if negative. |
+| Additional Holiday pay is zero | Actual hours ≤ contracted (e.g. sick/absence week) — formula uses Max(0, …). |
 | Page isn't updating | Hard-refresh the browser (Cmd-Shift-R / Ctrl-Shift-R). |
-| Can't sign in | Contact Utsav to reset the password. |

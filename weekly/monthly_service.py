@@ -241,9 +241,11 @@ def parse_weekly_gazebo_all_data(
 
     for row in text_rows[header_row + 1 :]:
         name = _to_text(row[0] if len(row) > 0 else "")
-        if not name:
-            break
         col_b = _to_text(row[1] if len(row) > 1 else "")
+        if not name:
+            if col_b.lower() in ("category", "category breakdown (overall)"):
+                break
+            break
         if col_b.startswith("Category breakdown"):
             break
         out.employees.append(

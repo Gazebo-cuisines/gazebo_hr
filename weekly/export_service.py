@@ -1,4 +1,4 @@
-"""Branded export helpers for the weekly report (CSV / PDF / branded Excel)."""
+"""Branded export helpers for the daily report (CSV / PDF / branded Excel)."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from reportlab.platypus import (
 
 
 BRAND_NAME = "Gazebo HR"
-BRAND_TAGLINE = "Weekly payroll & reporting"
+BRAND_TAGLINE = "Daily payroll & reporting"
 PRIMARY_BLUE = "#003078"
 ACCENT_BLUE = "#1d70b8"
 
@@ -48,6 +48,36 @@ EXPORT_COLUMNS = [
     "ContractMatchReason",
 ]
 
+WEEKLY_BRAND_TAGLINE = "Weekly payroll & reporting"
+
+WEEKLY_EXPORT_COLUMNS = [
+    "Name",
+    "Category",
+    "SageNo",
+    "BasicHours",
+    "MonFriOvertime",
+    "SatSunOvertime",
+    "AnnualHoliday",
+    "TotalPaidHours",
+    "ContractedHours",
+    "ExtraHours",
+    "AdditionalHolidayPay",
+    "ContractHourMatch",
+    "ContractMatchReason",
+]
+
+WEEKLY_EXPORT_HEADER_LABELS = {
+    "TotalPaidHours": "Actual hours",
+    "ContractedHours": "Contracted hours",
+    "ExtraHours": "Extra hours",
+    "AdditionalHolidayPay": "Additional Holiday pay",
+}
+
+
+def weekly_export_header_labels(column_keys: list[str] | None = None) -> list[str]:
+    keys = column_keys or WEEKLY_EXPORT_COLUMNS
+    return [WEEKLY_EXPORT_HEADER_LABELS.get(k, k) for k in keys]
+
 
 def _now_label() -> str:
     return datetime.now().strftime("%d %B %Y, %H:%M")
@@ -59,10 +89,19 @@ def _logo_path() -> Path | None:
     return candidate if candidate.exists() else None
 
 
-def build_csv_bytes(rows: list[dict[str, Any]], summary: dict[str, Any] | None = None) -> bytes:
+def build_csv_bytes(
+    rows: list[dict[str, Any]],
+    summary: dict[str, Any] | None = None,
+    *,
+    report_title: str = "Daily report",
+    columns: list[str] | None = None,
+    column_headers: list[str] | None = None,
+) -> bytes:
+    export_cols = columns or EXPORT_COLUMNS
+    headers = column_headers or export_cols
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow([f"{BRAND_NAME} — Weekly report"])
+    writer.writerow([f"{BRAND_NAME} — {report_title}"])
     writer.writerow([f"Generated: {_now_label()}"])
     if summary:
         writer.writerow([
@@ -72,13 +111,36 @@ def build_csv_bytes(rows: list[dict[str, Any]], summary: dict[str, Any] | None =
             f"Total paid hours: {summary.get('total_paid_hours', '')}",
         ])
     writer.writerow([])
-    writer.writerow(EXPORT_COLUMNS)
+    writer.writerow(headers)
     for r in rows:
-        writer.writerow([r.get(c, "") for c in EXPORT_COLUMNS])
+        out = []
+        for c in export_cols:
+            v = r.get(c, "")
+            if isinstance(v, float):
+                out.append(f"{v:.2f}")
+            else:
+                out.append(v)
+        writer.writerow(out)
     return buf.getvalue().encode("utf-8-sig")
 
 
-def add_branding_cover_sheet(xlsx_bytes: bytes, summary: dict[str, Any] | None = None) -> bytes:
+def build_weekly_csv_bytes(rows: list[dict[str, Any]], summary: dict[str, Any] | None = None) -> bytes:
+    return build_csv_bytes(
+        rows,
+        summary,
+        report_title="Weekly report",
+        columns=WEEKLY_EXPORT_COLUMNS,
+        column_headers=weekly_export_header_labels(),
+    )
+
+
+def add_branding_cover_sheet(
+    xlsx_bytes: bytes,
+    summary: dict[str, Any] | None = None,
+    *,
+    report_title: str = "Daily report",
+    tagline: str | None = None,
+) -> bytes:
     """Insert a branded cover sheet at index 0 of an existing xlsx workbook."""
     wb = load_workbook(BytesIO(xlsx_bytes))
     ws = wb.create_sheet(title="Cover", index=0)
@@ -94,7 +156,7 @@ def add_branding_cover_sheet(xlsx_bytes: bytes, summary: dict[str, Any] | None =
 
     ws.merge_cells("A1:B3")
     cell = ws["A1"]
-    cell.value = f"{BRAND_NAME}\n{BRAND_TAGLINE}"
+    cell.value = f"{BRAND_NAME}\n{tagline or BRAND_TAGLINE}"
     cell.fill = header_fill
     cell.font = title_font
     cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True, indent=2)
@@ -113,7 +175,7 @@ def add_branding_cover_sheet(xlsx_bytes: bytes, summary: dict[str, Any] | None =
             pass
 
     rows: list[tuple[str, str]] = [
-        ("Report", "Weekly report"),
+        ("Report", report_title),
         ("Generated", _now_label()),
     ]
     if summary:
@@ -142,7 +204,25 @@ def add_branding_cover_sheet(xlsx_bytes: bytes, summary: dict[str, Any] | None =
     return out.getvalue()
 
 
-def build_pdf_bytes(rows: list[dict[str, Any]], summary: dict[str, Any] | None = None) -> bytes:
+def add_weekly_branding_cover_sheet(xlsx_bytes: bytes, summary: dict[str, Any] | None = None) -> bytes:
+    return add_branding_cover_sheet(
+        xlsx_bytes,
+        summary,
+        report_title="Weekly report",
+        tagline=WEEKLY_BRAND_TAGLINE,
+    )
+
+
+def build_pdf_bytes(
+    rows: list[dict[str, Any]],
+    summary: dict[str, Any] | None = None,
+    *,
+    report_title: str = "Daily report",
+    columns: list[str] | None = None,
+    column_headers: list[str] | None = None,
+) -> bytes:
+    export_cols = columns or EXPORT_COLUMNS
+    headers = column_headers or export_cols
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf,
@@ -151,7 +231,7 @@ def build_pdf_bytes(rows: list[dict[str, Any]], summary: dict[str, Any] | None =
         rightMargin=12 * mm,
         topMargin=12 * mm,
         bottomMargin=14 * mm,
-        title=f"{BRAND_NAME} — Weekly report",
+        title=f"{BRAND_NAME} — {report_title}",
         author=BRAND_NAME,
     )
     styles = getSampleStyleSheet()
@@ -169,7 +249,7 @@ def build_pdf_bytes(rows: list[dict[str, Any]], summary: dict[str, Any] | None =
     header_cells.append(
         Paragraph(
             f"<font size=18 color='{PRIMARY_BLUE}'><b>{BRAND_NAME}</b></font><br/>"
-            f"<font size=10 color='#555'>Weekly report — generated {_now_label()}</font>",
+            f"<font size=10 color='#555'>{report_title} — generated {_now_label()}</font>",
             styles["Normal"],
         ),
     )
@@ -192,10 +272,10 @@ def build_pdf_bytes(rows: list[dict[str, Any]], summary: dict[str, Any] | None =
 
     story.append(Spacer(1, 6 * mm))
 
-    head = EXPORT_COLUMNS
+    head = headers
     data: list[list[Any]] = [head]
     for r in rows:
-        data.append([_pdf_cell(r.get(c, "")) for c in head])
+        data.append([_pdf_cell(r.get(c, "")) for c in export_cols])
 
     table = Table(data, repeatRows=1)
     table.setStyle(TableStyle([
@@ -223,6 +303,16 @@ def build_pdf_bytes(rows: list[dict[str, Any]], summary: dict[str, Any] | None =
 
     doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
     return buf.getvalue()
+
+
+def build_weekly_pdf_bytes(rows: list[dict[str, Any]], summary: dict[str, Any] | None = None) -> bytes:
+    return build_pdf_bytes(
+        rows,
+        summary,
+        report_title="Weekly report",
+        columns=WEEKLY_EXPORT_COLUMNS,
+        column_headers=weekly_export_header_labels(),
+    )
 
 
 def _pdf_cell(value: Any) -> str:
