@@ -45,21 +45,30 @@ _HOUR_DECIMAL_FIELDS = frozenset(
 )
 _EXCEL_NUM_FORMAT = "0.00"
 
-AGENCY_CATEGORIES = {
-    "A-EL CLNR",
-    "A-EL DPCH",
-    "A-EL PKNG HIGH_RISK",
-    "A-EL PKNG SLEEVING",
-    "A-EL PROD BELT",
-    "A-EL PROD FORMING",
-    "A-EL PROD FRYING",
-    "A-EL PROD PREPARATION",
-    "A-EL TECHNICAL",
-    "A-PM PKNG HIGH_RISK",
-    "A-RS PKNG SLEEVING",
-    "A-RS PROD BELT",
-    "A-RS PROD FRYING",
-}
+def is_agency_category(category: str) -> bool:
+    """Agency rows use ClockRite categories whose name starts with A-."""
+    return str(category or "").strip().upper().startswith("A-")
+
+
+def agency_categories_from_rows(rows: list[dict[str, Any]]) -> list[str]:
+    """Distinct category labels from rows that count as agency (A- prefix), sorted."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for row in rows:
+        cat = str(row.get("Category", "")).strip()
+        if is_agency_category(cat) and cat not in seen:
+            seen.add(cat)
+            out.append(cat)
+    return sorted(out, key=str.upper)
+
+
+def split_emp_agency_rows(
+    employee_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return (gazebo_rows, agency_rows) for EMP / Agency totals."""
+    agency_rows = [r for r in employee_rows if is_agency_category(str(r.get("Category", "")))]
+    gazebo_rows = [r for r in employee_rows if not is_agency_category(str(r.get("Category", "")))]
+    return gazebo_rows, agency_rows
 
 
 @dataclass
@@ -748,8 +757,7 @@ def calculate_payroll(employee_rows: list[dict[str, Any]], contracted_file_obj: 
         if full:
             row["Name"] = full
 
-    agency_rows = [r for r in employee_rows if str(r["Category"]).strip().upper() in AGENCY_CATEGORIES]
-    gazebo_rows = [r for r in employee_rows if str(r["Category"]).strip().upper() not in AGENCY_CATEGORIES]
+    gazebo_rows, agency_rows = split_emp_agency_rows(employee_rows)
     all_hours = total_paid_hours_from_rows(employee_rows)
 
     return PayrollResult(
@@ -761,6 +769,28 @@ def calculate_payroll(employee_rows: list[dict[str, Any]], contracted_file_obj: 
 
 
 _HOLIDAY_PAY_FACTOR = 0.1207
+HOLIDAY_PAY_FACTOR = _HOLIDAY_PAY_FACTOR
+
+
+def compute_extra_holiday_pay(
+    total_paid_hours: float,
+    contracted_hours: float = 0.0,
+    *,
+    extra_hours: float | None = None,
+    additional_holiday_pay: float | None = None,
+) -> tuple[float, float]:
+    """Weekly report rules: extra = max(0, actual − contracted); holiday = factor × extra."""
+    if extra_hours is not None:
+        extra = _round2(max(0.0, float(extra_hours)))
+    else:
+        actual = max(0.0, float(total_paid_hours))
+        contracted = max(0.0, float(contracted_hours))
+        extra = _round2(max(0.0, actual - contracted))
+    if additional_holiday_pay is not None:
+        holiday = _round2(max(0.0, float(additional_holiday_pay)))
+    else:
+        holiday = _round2(max(0.0, extra * _HOLIDAY_PAY_FACTOR))
+    return extra, holiday
 
 
 def calculate_weekly_payroll(employee_rows: list[dict[str, Any]], contracted_file_obj: Any) -> PayrollResult:
@@ -772,8 +802,9 @@ def calculate_weekly_payroll(employee_rows: list[dict[str, Any]], contracted_fil
         row["TotalPaidHours"] = actual
         row["ContractedHours"] = contracted
         row.pop("Overtime", None)
-        row["ExtraHours"] = _round2(max(0.0, actual - contracted))
-        row["AdditionalHolidayPay"] = _round2(max(0.0, row["ExtraHours"] * _HOLIDAY_PAY_FACTOR))
+        extra, holiday = compute_extra_holiday_pay(actual, contracted)
+        row["ExtraHours"] = extra
+        row["AdditionalHolidayPay"] = holiday
         _round_row_hours(row)
     return PayrollResult(
         rows=result.rows,
@@ -859,7 +890,7 @@ def _overall_category_key(category: str) -> str:
         return "CLNR"
     if "TECH" in c:
         return "TECH"
-    if c == "OFCE":
+    if "OFCE" in c:
         return "OFFICE"
     return "OTHER"
 
@@ -890,6 +921,13 @@ def _build_overall_analysis_dataframe(analysis_df: pd.DataFrame) -> pd.DataFrame
         for c in _CATEGORY_BAND_COLS:
             buckets[b][c] += float(row[c] or 0.0)
     return pd.DataFrame([{"Category": k, **buckets[k]} for k in _OVERALL_CATEGORY_ORDER])
+
+
+def build_overall_category_totals(rows: list[dict[str, Any]]) -> pd.DataFrame:
+    """Roll per-category band sums into PROD/PACK/WRHS/CLNR/TECH/OFFICE (weekly + monthly)."""
+    if not rows:
+        return pd.DataFrame(columns=["Category", *_CATEGORY_BAND_COLS])
+    return _build_overall_analysis_dataframe(pd.DataFrame(rows))
 
 
 _ALL_DATA_SECTION_TITLES = (
