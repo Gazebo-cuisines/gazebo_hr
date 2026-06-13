@@ -9,6 +9,11 @@ from pathlib import Path
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 
+from .export_service import (
+    WEEKLY_EXPORT_HEADER_LABELS,
+    build_weekly_csv_bytes,
+    weekly_export_header_labels,
+)
 from .payroll_service import (
     PayrollResult,
     _OVERALL_CATEGORY_ORDER,
@@ -16,10 +21,14 @@ from .payroll_service import (
     _build_grouped_analysis_dataframe,
     _build_overall_analysis_dataframe,
     _overall_category_key,
+    _resolve_contracted_hours,
+    audit_contract_integrity,
     audit_contract_pay_id_coverage,
     build_emp_agency_total_df,
     build_excel_bytes,
     calculate_payroll,
+    calculate_weekly_payroll,
+    load_contract_file_index,
     parse_contracted_hours,
     parse_employee_display_names,
     parse_employee_hours,
@@ -122,6 +131,180 @@ class SagePayRefContractAliasTest(unittest.TestCase):
         self.assertEqual(result.rows[0]["ContractMatchReason"], "Matched on Pay ID")
         self.assertEqual(result.rows[0]["ContractedHours"], 40.0)
         self.assertEqual(result.rows[0]["Overtime"], 5.0)
+
+
+class WeeklyPayrollCalculationTest(unittest.TestCase):
+    def _contract_workbook(self, hours: float = 40.0) -> BytesIO:
+        wb = Workbook()
+        ws = wb.active
+        ws.cell(1, 1, "Payroll Number")
+        ws.cell(1, 2, "Contract Hrs")
+        ws.cell(2, 1, 100)
+        ws.cell(2, 2, hours)
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf
+
+    def test_extra_hours_and_additional_holiday_pay(self) -> None:
+        employees = [
+            {
+                "SageNo": 100,
+                "Name": "TEST USER",
+                "Category": "TEST",
+                "TotalPaidHours": 45.0,
+            },
+        ]
+        result = calculate_weekly_payroll(employees, self._contract_workbook(40.0))
+        row = result.rows[0]
+        self.assertEqual(row["TotalPaidHours"], 45.0)
+        self.assertEqual(row["ContractedHours"], 40.0)
+        self.assertEqual(row["ExtraHours"], 5.0)
+        self.assertEqual(row["AdditionalHolidayPay"], 0.6)
+        self.assertNotIn("Overtime", row)
+
+    def test_zero_extra_when_under_contract(self) -> None:
+        employees = [
+            {
+                "SageNo": 100,
+                "Name": "TEST USER",
+                "Category": "TEST",
+                "TotalPaidHours": 38.0,
+            },
+        ]
+        result = calculate_weekly_payroll(employees, self._contract_workbook(40.0))
+        row = result.rows[0]
+        self.assertEqual(row["ExtraHours"], 0.0)
+        self.assertEqual(row["AdditionalHolidayPay"], 0.0)
+
+    def test_clamps_negative_actual_and_contract_hours(self) -> None:
+        employees = [
+            {
+                "SageNo": 100,
+                "Name": "TEST USER",
+                "Category": "TEST",
+                "TotalPaidHours": -10.0,
+            },
+        ]
+        result = calculate_weekly_payroll(employees, self._contract_workbook(-5.0))
+        row = result.rows[0]
+        self.assertEqual(row["TotalPaidHours"], 0.0)
+        self.assertEqual(row["ContractedHours"], 0.0)
+        self.assertEqual(row["ExtraHours"], 0.0)
+        self.assertEqual(row["AdditionalHolidayPay"], 0.0)
+
+
+class AmitSpreadsheetRegressionTest(unittest.TestCase):
+    """Rows from data/Amit Data/holiday formula sheet.xlsx — 0.1207 × extra hours."""
+
+    def _contract_workbook(self, hours: float) -> BytesIO:
+        wb = Workbook()
+        ws = wb.active
+        ws.cell(1, 1, "Payroll Number")
+        ws.cell(1, 2, "Contract Hrs")
+        ws.cell(2, 1, 1)
+        ws.cell(2, 2, hours)
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf
+
+    def test_amit_spreadsheet_examples(self) -> None:
+        cases = (
+            ("Amit rathod", 50.0, 40.0, 10.0, 1.21),
+            ("Utsav Gohel", 16.0, 8.0, 8.0, 0.97),
+            ("Aparup Poder", 20.0, 10.0, 10.0, 1.21),
+            ("Bhargav Vanza", 30.0, 40.0, 0.0, 0.0),
+        )
+        for name, actual, contract, extra, holiday in cases:
+            with self.subTest(name=name):
+                employees = [
+                    {
+                        "SageNo": 1,
+                        "Name": name,
+                        "Category": "TEST",
+                        "TotalPaidHours": actual,
+                    },
+                ]
+                result = calculate_weekly_payroll(employees, self._contract_workbook(contract))
+                row = result.rows[0]
+                self.assertEqual(row["TotalPaidHours"], actual)
+                self.assertEqual(row["ContractedHours"], contract)
+                self.assertEqual(row["ExtraHours"], extra)
+                self.assertEqual(row["AdditionalHolidayPay"], holiday)
+
+
+class WeeklyExportTest(unittest.TestCase):
+    def _sample_weekly_result(self) -> PayrollResult:
+        row = {
+            "Name": "TEST USER",
+            "Category": "TEST",
+            "SageNo": 100,
+            "BasicHours": 32.0,
+            "MonFriOvertime": 1.0,
+            "SatSunOvertime": 2.0,
+            "AnnualHoliday": 8.0,
+            "TotalPaidHours": 45.0,
+            "ContractedHours": 40.0,
+            "ExtraHours": 5.0,
+            "AdditionalHolidayPay": 0.6,
+            "ContractHourMatch": "Yes",
+            "ContractMatchReason": "Matched on Pay ID",
+        }
+        return PayrollResult(
+            rows=[row],
+            agency_rows=[],
+            gazebo_rows=[row],
+            total_paid_hours=45.0,
+        )
+
+    def test_weekly_csv_uses_extra_and_holiday_columns_not_overtime(self) -> None:
+        result = self._sample_weekly_result()
+        raw = build_weekly_csv_bytes(result.rows).decode("utf-8-sig")
+        lines = [ln for ln in raw.splitlines() if ln.strip()]
+        header = lines[-2] if len(lines) >= 2 else ""
+        header_cols = header.split(",")
+        self.assertIn("Extra hours", header_cols)
+        self.assertIn("Additional Holiday pay", header_cols)
+        self.assertIn("Actual hours", header_cols)
+        self.assertIn("Contracted hours", header_cols)
+        self.assertNotIn("Overtime", header_cols)
+        self.assertEqual(header_cols, weekly_export_header_labels())
+
+    def test_weekly_excel_all_data_includes_extra_and_holiday_columns(self) -> None:
+        data = build_excel_bytes(self._sample_weekly_result(), column_rename=WEEKLY_EXPORT_HEADER_LABELS)
+        wb = load_workbook(BytesIO(data), read_only=True)
+        ws = wb["All Data"]
+        headers = [ws.cell(1, c).value for c in range(1, ws.max_column + 1)]
+        self.assertIn("Extra hours", headers)
+        self.assertIn("Additional Holiday pay", headers)
+        self.assertIn("Actual hours", headers)
+        self.assertNotIn("Overtime", headers)
+        self.assertEqual(ws.cell(2, headers.index("Extra hours") + 1).value, 5.0)
+        self.assertEqual(ws.cell(2, headers.index("Additional Holiday pay") + 1).value, 0.6)
+        wb.close()
+
+    def test_daily_calculate_payroll_regression_overtime_unchanged(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.cell(1, 1, "Payroll Number")
+        ws.cell(1, 2, "Contract Hrs")
+        ws.cell(2, 1, 100)
+        ws.cell(2, 2, 40.0)
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        employees = [
+            {
+                "SageNo": 100,
+                "Name": "TEST USER",
+                "Category": "TEST",
+                "TotalPaidHours": 45.0,
+            },
+        ]
+        result = calculate_payroll(employees, buf)
+        self.assertEqual(result.rows[0]["Overtime"], 5.0)
+        self.assertNotIn("ExtraHours", result.rows[0])
 
 
 class EmployeeDisplayNameLookupTest(unittest.TestCase):
@@ -620,3 +803,143 @@ class MonthlyLegacyWeekParseTest(unittest.TestCase):
             s = parse_monthly_week_file(f)
         self.assertGreater(len(s.employees), 50)
         self.assertIn("EMP", s.emp_agency_bands)
+
+
+_BUG1528_DIR = _DATA / "bug1528"
+_BUG1528_CONTRACT = _BUG1528_DIR / "contract employee hours.xls"
+_BUG1528_EMPLOYEE = _BUG1528_DIR / "dgross_paysummary2 (2).xls"
+
+
+@unittest.skipUnless(_BUG1528_CONTRACT.is_file(), "data/bug1528 contract fixture not in repo")
+class Bug1528ContractHoursRegressionTest(unittest.TestCase):
+    def test_adjacent_block_does_not_overwrite_payroll_691_contract_hours(self) -> None:
+        with _BUG1528_CONTRACT.open("rb") as f:
+            by_payroll, by_name = parse_contracted_hours(f)
+        self.assertAlmostEqual(by_payroll[691], 8.0)
+        self.assertAlmostEqual(by_payroll[1160], 8.0)
+        self.assertAlmostEqual(by_name["UTSAV GOHEL"], 8.0)
+
+    @unittest.skipUnless(_BUG1528_EMPLOYEE.is_file(), "data/bug1528 employee fixture not in repo")
+    def test_utsav_gohel_pay_id_691_gets_eight_contracted_hours(self) -> None:
+        with _BUG1528_EMPLOYEE.open("rb") as ef, _BUG1528_CONTRACT.open("rb") as cf:
+            result = calculate_payroll(parse_employee_hours(ef), cf)
+        row = next(r for r in result.rows if r["SageNo"] == 691)
+        self.assertEqual(row["ContractedHours"], 8.0)
+        self.assertEqual(row["ContractHourMatch"], "Yes")
+        self.assertEqual(row["ContractMatchReason"], "Matched on Pay ID")
+
+
+class AdjacentBlockSageAliasRegressionTest(unittest.TestCase):
+    def test_sage_pay_ref_from_prior_block_is_not_reused(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        blocks = (
+            (("Contract Hrs", 8.0), ("Sage Pay Ref", 691), ("Payroll Number", 691)),
+            (("Contract Hrs", 0.0), ("Sage Pay Ref", 1648), ("Payroll Number", 1648)),
+        )
+        r = 0
+        for block in blocks:
+            r += 1
+            ws.cell(r, 1, 1000 + r)
+            ws.cell(r, 2, f"Employee {r}")
+            for label, val in block:
+                r += 1
+                ws.cell(r, 6, label)
+                ws.cell(r, 7, val)
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        by_payroll, _ = parse_contracted_hours(buf)
+        self.assertAlmostEqual(by_payroll[691], 8.0)
+        self.assertAlmostEqual(by_payroll[1648], 0.0)
+
+
+class DuplicatePayIdConflictTest(unittest.TestCase):
+    def test_duplicate_pay_id_flags_conflict_and_review(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        r = 0
+        for hours, pay_id, name in ((40.0, 500, "Alice One"), (35.0, 500, "Alice Two")):
+            r += 1
+            ws.cell(r, 1, pay_id)
+            ws.cell(r, 2, name)
+            for label, val in (("Contract Hrs", hours), ("Payroll Number", pay_id)):
+                r += 1
+                ws.cell(r, 6, label)
+                ws.cell(r, 7, val)
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        index = load_contract_file_index(buf)
+        self.assertEqual(len(index.conflicts), 1)
+        self.assertIn(500, index.conflicted_pay_ids)
+        hours, match, reason = _resolve_contracted_hours(500, "ALICE ONE", index)
+        self.assertEqual(match, "Review")
+        self.assertIn("conflict", reason.lower())
+        self.assertEqual(hours, 0.0)
+
+
+class AbbreviatedNameViaSageMapTest(unittest.TestCase):
+    @unittest.skipUnless(_BUG1528_CONTRACT.is_file(), "data/bug1528 contract fixture not in repo")
+    def test_abbreviated_hours_file_name_resolves_via_pay_id(self) -> None:
+        with _BUG1528_CONTRACT.open("rb") as f:
+            index = load_contract_file_index(f)
+        hours, match, reason = _resolve_contracted_hours(691, "U GOHEL", index)
+        self.assertAlmostEqual(hours, 8.0)
+        self.assertEqual(match, "Yes")
+        self.assertEqual(reason, "Matched on Pay ID")
+        self.assertEqual(index.by_sage_name.get(691), "UTSAV GOHEL")
+
+
+class ZeroPayIdFallbackTest(unittest.TestCase):
+    def test_name_match_when_pay_id_missing_from_contract_export(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        r = 0
+        for label, val in (("Contract Hrs", 37.5), ("Payroll Number", 900)):
+            r += 1
+            ws.cell(r, 1, 900)
+            ws.cell(r, 2, "JANE DOE")
+            ws.cell(r, 6, label)
+            ws.cell(r, 7, val)
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        employees = [
+            {
+                "SageNo": 999,
+                "Name": "JANE DOE",
+                "Category": "TEST",
+                "TotalPaidHours": 40.0,
+            },
+        ]
+        result = calculate_payroll(employees, buf)
+        row = result.rows[0]
+        self.assertEqual(row["ContractedHours"], 37.5)
+        self.assertEqual(row["ContractHourMatch"], "Yes")
+        self.assertEqual(row["ContractMatchReason"], "Matched on employee name")
+
+
+class ContractIntegrityAuditTest(unittest.TestCase):
+    def test_audit_reports_missing_and_conflicts(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        r = 0
+        for hours, pay_id, name in ((40.0, 500, "Alice One"), (35.0, 500, "Alice Two")):
+            r += 1
+            ws.cell(r, 1, pay_id)
+            ws.cell(r, 2, name)
+            for label, val in (("Contract Hrs", hours), ("Payroll Number", pay_id)):
+                r += 1
+                ws.cell(r, 6, label)
+                ws.cell(r, 7, val)
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        employees = [{"SageNo": 500, "Name": "Alice One", "Category": "TEST", "TotalPaidHours": 45.0}]
+        payroll = calculate_payroll(employees, buf)
+        buf.seek(0)
+        audit = audit_contract_integrity(employees, buf, payroll.rows)
+        self.assertEqual(len(audit.conflicts), 1)
+        self.assertEqual(len(audit.review), 1)
+        self.assertEqual(audit.review[0]["SageNo"], 500)

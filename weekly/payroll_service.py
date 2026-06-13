@@ -30,6 +30,20 @@ _CLOCKRITE_ANNUAL_L_COL = 11
 _CATEGORY_COL = 2
 _CATEGORY_NUM_START = 4
 _CATEGORY_BAND_COLS = ["BasicHours", "MonFriOvertime", "SatSunOvertime", "AnnualHoliday", "TotalPaidHours"]
+_HOUR_DECIMAL_FIELDS = frozenset(
+    {
+        "BasicHours",
+        "MonFriOvertime",
+        "SatSunOvertime",
+        "AnnualHoliday",
+        "TotalPaidHours",
+        "ContractedHours",
+        "Overtime",
+        "ExtraHours",
+        "AdditionalHolidayPay",
+    }
+)
+_EXCEL_NUM_FORMAT = "0.00"
 
 AGENCY_CATEGORIES = {
     "A-EL CLNR",
@@ -54,6 +68,38 @@ class PayrollResult:
     agency_rows: list[dict[str, Any]]
     gazebo_rows: list[dict[str, Any]]
     total_paid_hours: float
+
+
+@dataclass(frozen=True)
+class EmployeeContractBlock:
+    payroll_number: int | None
+    sage_pay_ref: int | None
+    prox_id: int | None
+    title_id: int | None
+    full_name: str
+    clock_name: str
+    contract_hours: float
+    source_row: int
+
+
+@dataclass
+class ContractFileIndex:
+    blocks: list[EmployeeContractBlock]
+    by_payroll: dict[int, float]
+    by_name: dict[str, float]
+    by_sage_name: dict[int, str]
+    by_clock_name: dict[str, str]
+    pay_id_to_block: dict[int, EmployeeContractBlock]
+    name_to_block: dict[str, EmployeeContractBlock]
+    conflicted_pay_ids: frozenset[int]
+    conflicts: list[dict[str, Any]]
+
+
+@dataclass
+class ContractAuditResult:
+    missing: list[dict[str, Any]]
+    conflicts: list[dict[str, Any]]
+    review: list[dict[str, Any]]
 
 
 def total_paid_hours_from_rows(rows: list[dict[str, Any]]) -> float:
@@ -82,6 +128,16 @@ def _parse_decimal(value: Any) -> float:
         return float(text)
     except ValueError:
         return 0.0
+
+
+def _round2(value: float) -> float:
+    return round(float(value), 2)
+
+
+def _round_row_hours(row: dict[str, Any]) -> None:
+    for key in _HOUR_DECIMAL_FIELDS:
+        if key in row and row[key] is not None:
+            row[key] = _round2(row[key])
 
 
 def _parse_int(value: Any) -> int | None:
@@ -199,18 +255,18 @@ def parse_employee_hours(file_obj: Any) -> list[dict[str, Any]]:
         basic_hours = basic_gross - annual_holiday
         total_paid = basic_hours + mon_fri_ot + sat_sun_ot + annual_holiday
 
-        result.append(
-            {
-                "Name": name_text.upper(),
-                "Category": category,
-                "SageNo": pay_id,
-                "BasicHours": basic_hours,
-                "MonFriOvertime": mon_fri_ot,
-                "SatSunOvertime": sat_sun_ot,
-                "AnnualHoliday": annual_holiday,
-                "TotalPaidHours": total_paid,
-            }
-        )
+        row = {
+            "Name": name_text.upper(),
+            "Category": category,
+            "SageNo": pay_id,
+            "BasicHours": basic_hours,
+            "MonFriOvertime": mon_fri_ot,
+            "SatSunOvertime": sat_sun_ot,
+            "AnnualHoliday": annual_holiday,
+            "TotalPaidHours": total_paid,
+        }
+        _round_row_hours(row)
+        result.append(row)
 
     return result
 
@@ -275,28 +331,6 @@ def _contract_hrs_value_in_row(row: list[str]) -> float | None:
     return None
 
 
-def _sage_pay_ref_ids_near(rows: list[list[str]], r_payroll: int, row_span: int = 22, row_forward: int = 8) -> list[int]:
-    """ClockRite employee blocks may put Sage Pay Ref on another row than Payroll Number (Sage ≠ Prox ID)."""
-    seen: set[int] = set()
-    out: list[int] = []
-    r0 = max(0, r_payroll - row_span)
-    r1 = min(len(rows), r_payroll + row_forward)
-    for rr in range(r0, r1):
-        row = rows[rr]
-        for c, cell in enumerate(row):
-            if _normalize_header(cell) != "sagepayref":
-                continue
-            if c + 1 >= len(row):
-                continue
-            sid = _parse_int(row[c + 1])
-            if sid is None or sid <= 0:
-                continue
-            if sid not in seen:
-                seen.add(sid)
-                out.append(sid)
-    return out
-
-
 def _block_start_row(rows: list[list[str]], r_payroll: int) -> int:
     """Row index of the block title row (Prox ID + full name) above Payroll Number."""
     for back in range(1, 30):
@@ -311,26 +345,197 @@ def _block_start_row(rows: list[list[str]], r_payroll: int) -> int:
     return max(0, r_payroll - 25)
 
 
-def _sage_pay_ref_ids_in_block(rows: list[list[str]], r_payroll: int) -> list[int]:
-    """Sage Pay Ref values within one employee block only (avoids adjacent-block bleed)."""
-    seen: set[int] = set()
-    out: list[int] = []
-    r0 = _block_start_row(rows, r_payroll)
-    r1 = min(len(rows), r_payroll + 4)
-    for rr in range(r0, r1):
+def _parse_single_clockrite_block(rows: list[list[str]], r_payroll: int, pay_no: int) -> EmployeeContractBlock:
+    block_start = _block_start_row(rows, r_payroll)
+    hours = 0.0
+    for back in range(1, r_payroll - block_start + 1):
+        got = _contract_hrs_value_in_row(rows[r_payroll - back])
+        if got is not None:
+            hours = got
+            break
+
+    sage_pay_ref: int | None = None
+    prox_id: int | None = None
+    r1 = r_payroll + 1
+    for rr in range(block_start, r1):
         row = rows[rr]
         for c, cell in enumerate(row):
-            if _normalize_header(cell) != "sagepayref":
+            n = _normalize_header(cell)
+            if n == "sagepayref" and c + 1 < len(row):
+                sid = _parse_int(row[c + 1])
+                if sid is not None and sid > 0:
+                    sage_pay_ref = sid
+            elif n == "proxid" and c + 1 < len(row):
+                pid = _parse_int(row[c + 1])
+                if pid is not None and pid > 0:
+                    prox_id = pid
+
+    full_name, clock_name = _block_names_near(rows, r_payroll)
+    title_id = _parse_int(rows[block_start][0] if block_start < len(rows) and rows[block_start] else "")
+    return EmployeeContractBlock(
+        payroll_number=pay_no,
+        sage_pay_ref=sage_pay_ref,
+        prox_id=prox_id,
+        title_id=title_id,
+        full_name=full_name,
+        clock_name=clock_name,
+        contract_hours=hours,
+        source_row=r_payroll + 1,
+    )
+
+
+def _parse_clockrite_blocks(rows: list[list[str]]) -> list[EmployeeContractBlock]:
+    blocks: list[EmployeeContractBlock] = []
+    for r, row in enumerate(rows):
+        for c, cell in enumerate(row):
+            if _normalize_header(cell) != "payrollnumber":
                 continue
             if c + 1 >= len(row):
                 continue
-            sid = _parse_int(row[c + 1])
-            if sid is None or sid <= 0:
+            pay_no = _parse_int(row[c + 1])
+            if pay_no is None or pay_no == 0:
                 continue
-            if sid not in seen:
-                seen.add(sid)
-                out.append(sid)
-    return out
+            blocks.append(_parse_single_clockrite_block(rows, r, pay_no))
+    return blocks
+
+
+def _block_pay_ids(block: EmployeeContractBlock) -> list[int]:
+    ids: list[int] = []
+    for value in (block.payroll_number, block.sage_pay_ref, block.prox_id, block.title_id):
+        if value is not None and value > 0:
+            ids.append(value)
+    return ids
+
+
+def _build_contract_index_from_blocks(blocks: list[EmployeeContractBlock]) -> ContractFileIndex:
+    by_payroll: dict[int, float] = {}
+    by_name: dict[str, float] = {}
+    by_sage_name: dict[int, str] = {}
+    by_clock_name: dict[str, str] = {}
+    pay_id_to_block: dict[int, EmployeeContractBlock] = {}
+    name_to_block: dict[str, EmployeeContractBlock] = {}
+    conflicts: list[dict[str, Any]] = []
+    conflicted_pay_ids: set[int] = set()
+
+    def register_pay_id(pay_id: int, block: EmployeeContractBlock) -> None:
+        if pay_id in conflicted_pay_ids:
+            return
+        existing = pay_id_to_block.get(pay_id)
+        if existing is None:
+            pay_id_to_block[pay_id] = block
+            by_payroll[pay_id] = block.contract_hours
+            return
+        if abs(existing.contract_hours - block.contract_hours) > 0.001:
+            conflicted_pay_ids.add(pay_id)
+            conflicts.append(
+                {
+                    "PayId": pay_id,
+                    "HoursA": existing.contract_hours,
+                    "HoursB": block.contract_hours,
+                    "RowA": existing.source_row,
+                    "RowB": block.source_row,
+                    "NameA": existing.full_name,
+                    "NameB": block.full_name,
+                }
+            )
+
+    def register_name(name: str, block: EmployeeContractBlock) -> None:
+        key = name.upper()
+        if not key:
+            return
+        existing = name_to_block.get(key)
+        if existing is None:
+            name_to_block[key] = block
+            by_name[key] = block.contract_hours
+            return
+        if abs(existing.contract_hours - block.contract_hours) > 0.001:
+            conflicts.append(
+                {
+                    "Name": name,
+                    "HoursA": existing.contract_hours,
+                    "HoursB": block.contract_hours,
+                    "RowA": existing.source_row,
+                    "RowB": block.source_row,
+                }
+            )
+
+    for block in blocks:
+        for pay_id in _block_pay_ids(block):
+            register_pay_id(pay_id, block)
+            if block.full_name and pay_id not in conflicted_pay_ids:
+                by_sage_name[pay_id] = block.full_name
+        if block.full_name:
+            register_name(block.full_name, block)
+        if block.clock_name:
+            register_name(block.clock_name, block)
+            by_clock_name[block.clock_name.upper()] = block.full_name
+
+    return ContractFileIndex(
+        blocks=blocks,
+        by_payroll=by_payroll,
+        by_name=by_name,
+        by_sage_name=by_sage_name,
+        by_clock_name=by_clock_name,
+        pay_id_to_block=pay_id_to_block,
+        name_to_block=name_to_block,
+        conflicted_pay_ids=frozenset(conflicted_pay_ids),
+        conflicts=conflicts,
+    )
+
+
+def _build_contract_index_from_tabular_rows(
+    rows: list[list[str]], header_row: int, payroll_col: int, contract_col: int, name_col: int
+) -> ContractFileIndex:
+    blocks: list[EmployeeContractBlock] = []
+    for offset, row in enumerate(rows[header_row + 1 :], start=header_row + 2):
+        if _row_contains_date_range(row):
+            break
+        hours = _parse_decimal(row[contract_col] if contract_col < len(row) else "")
+        if hours == 0.0:
+            continue
+        pay_no = _parse_int(row[payroll_col] if payroll_col < len(row) else "")
+        name = _to_text(row[name_col] if name_col >= 0 and name_col < len(row) else "")
+        blocks.append(
+            EmployeeContractBlock(
+                payroll_number=pay_no,
+                sage_pay_ref=None,
+                prox_id=None,
+                title_id=None,
+                full_name=name,
+                clock_name=name,
+                contract_hours=hours,
+                source_row=offset,
+            )
+        )
+    return _build_contract_index_from_blocks(blocks)
+
+
+def load_contract_file_index(file_obj: Any) -> ContractFileIndex:
+    df = _load_sheet(file_obj)
+    rows = [[_to_text(v) for v in rec] for rec in df.values.tolist()]
+    if not rows:
+        return ContractFileIndex([], {}, {}, {}, {}, {}, {}, frozenset(), [])
+
+    header_row = -1
+    payroll_col = -1
+    contract_col = -1
+    name_col = -1
+    for r, row in enumerate(rows[:80]):
+        pc = _find_header_index(row, "payrollnumber", "payrollno", "payroll")
+        cc = _find_header_index(row, "contracthrs", "contracthours", "contracthr", "contractedhours")
+        if pc >= 0 and cc >= 0:
+            header_row = r
+            payroll_col = pc
+            contract_col = cc
+            name_col = _find_header_index(row, "clockname", "name", "employeename")
+            break
+
+    if header_row >= 0:
+        index = _build_contract_index_from_tabular_rows(rows, header_row, payroll_col, contract_col, name_col)
+        if index.blocks:
+            return index
+
+    return _build_contract_index_from_blocks(_parse_clockrite_blocks(rows))
 
 
 def _block_names_near(rows: list[list[str]], r_payroll: int) -> tuple[str, str]:
@@ -359,130 +564,24 @@ def _block_names_near(rows: list[list[str]], r_payroll: int) -> tuple[str, str]:
 
 
 def _parse_clockrite_display_names(rows: list[list[str]]) -> tuple[dict[int, str], dict[str, str]]:
-    """Map Sage/Payroll IDs and clock names to full names from Employee Details blocks."""
-    by_sage: dict[int, str] = {}
-    by_clock: dict[str, str] = {}
-    for r, row in enumerate(rows):
-        for c, cell in enumerate(row):
-            if _normalize_header(cell) != "payrollnumber":
-                continue
-            if c + 1 >= len(row):
-                continue
-            pay_no = _parse_int(row[c + 1])
-            if pay_no is None or pay_no == 0:
-                continue
-            full_name, clock_name = _block_names_near(rows, r)
-            if not full_name:
-                continue
-            by_sage[pay_no] = full_name
-            for sid in _sage_pay_ref_ids_in_block(rows, r):
-                by_sage[sid] = full_name
-            if clock_name:
-                by_clock[clock_name.upper()] = full_name
-    return by_sage, by_clock
+    index = _build_contract_index_from_blocks(_parse_clockrite_blocks(rows))
+    return index.by_sage_name, index.by_clock_name
 
 
 def parse_employee_display_names(file_obj: Any) -> tuple[dict[int, str], dict[str, str]]:
     """Full names from contract file (ClockRite Employee Details layout)."""
-    df = _load_sheet(file_obj)
-    rows = [[_to_text(v) for v in rec] for rec in df.values.tolist()]
-    if not rows:
-        return {}, {}
-    return _parse_clockrite_display_names(rows)
+    index = load_contract_file_index(file_obj)
+    return index.by_sage_name, index.by_clock_name
 
 
 def _parse_clockrite_contract_report(rows: list[list[str]]) -> tuple[dict[int, float], dict[str, float]]:
-    """
-    Clockrite "Employee Details - Advanced" XLS: repeated blocks with label rows
-    (e.g. "Contract Hrs" and "Payroll Number" in separate rows, not one header table).
-    Join key: Payroll Number value == employee file Pay ID (SageNo).
-    """
-    by_payroll: dict[int, float] = {}
-    by_name: dict[str, float] = {}
-    for r, row in enumerate(rows):
-        for c, cell in enumerate(row):
-            if _normalize_header(cell) != "payrollnumber":
-                continue
-            if c + 1 >= len(row):
-                continue
-            pay_no = _parse_int(row[c + 1])
-            if pay_no is None or pay_no == 0:
-                continue
-            hours = 0.0
-            for back in range(1, 25):
-                if r - back < 0:
-                    break
-                prev = rows[r - back]
-                got = _contract_hrs_value_in_row(prev)
-                if got is not None:
-                    hours = got
-                    break
-            by_payroll[pay_no] = hours
-            for back in range(1, 30):
-                if r - back < 0:
-                    break
-                pr = rows[r - back]
-                if not pr:
-                    continue
-                a0 = _to_text(pr[0])
-                if a0.isdigit() and len(a0) < 6 and len(pr) > 1:
-                    name_key = _to_text(pr[1]).upper()
-                    if name_key:
-                        by_name[name_key] = hours
-                    break
-            for sid in _sage_pay_ref_ids_near(rows, r):
-                if sid == pay_no:
-                    continue
-                by_payroll[sid] = hours
-                logger.debug(
-                    "Contract hours: SagePayRef %s aliased to PayrollNumber %s hours=%s",
-                    sid,
-                    pay_no,
-                    hours,
-                )
-    return by_payroll, by_name
+    index = _build_contract_index_from_blocks(_parse_clockrite_blocks(rows))
+    return index.by_payroll, index.by_name
 
 
 def parse_contracted_hours(file_obj: Any) -> tuple[dict[int, float], dict[str, float]]:
-    df = _load_sheet(file_obj)
-    rows = [[_to_text(v) for v in rec] for rec in df.values.tolist()]
-    if not rows:
-        return {}, {}
-
-    header_row = -1
-    payroll_col = -1
-    contract_col = -1
-    name_col = -1
-    for r, row in enumerate(rows[:80]):
-        pc = _find_header_index(row, "payrollnumber", "payrollno", "payroll")
-        cc = _find_header_index(row, "contracthrs", "contracthours", "contracthr", "contractedhours")
-        if pc >= 0 and cc >= 0:
-            header_row = r
-            payroll_col = pc
-            contract_col = cc
-            name_col = _find_header_index(row, "clockname", "name", "employeename")
-            break
-
-    if header_row >= 0:
-        by_payroll: dict[int, float] = {}
-        by_name: dict[str, float] = {}
-        for row in rows[header_row + 1 :]:
-            if _row_contains_date_range(row):
-                break
-            hours = _parse_decimal(row[contract_col] if contract_col < len(row) else "")
-            if hours == 0.0:
-                continue
-            pay_no = _parse_int(row[payroll_col] if payroll_col < len(row) else "")
-            if pay_no is not None:
-                by_payroll[pay_no] = hours
-            if name_col >= 0 and name_col < len(row):
-                name = _to_text(row[name_col]).upper()
-                if name:
-                    by_name[name] = hours
-        if by_payroll or by_name:
-            return by_payroll, by_name
-
-    return _parse_clockrite_contract_report(rows)
+    index = load_contract_file_index(file_obj)
+    return index.by_payroll, index.by_name
 
 
 def audit_contract_pay_id_coverage(
@@ -490,11 +589,11 @@ def audit_contract_pay_id_coverage(
 ) -> list[dict[str, Any]]:
     """Employees whose Pay ID does not appear in the contract export (Payroll Number / Sage Pay Ref)."""
     contracted_file_obj.seek(0)
-    by_payroll, _ = parse_contracted_hours(contracted_file_obj)
+    index = load_contract_file_index(contracted_file_obj)
     missing: list[dict[str, Any]] = []
     for row in employee_rows:
         sage_no = int(row["SageNo"])
-        if sage_no not in by_payroll:
+        if sage_no not in index.by_payroll:
             missing.append(
                 {
                     "SageNo": sage_no,
@@ -505,39 +604,132 @@ def audit_contract_pay_id_coverage(
     return missing
 
 
+def _same_person_blocks(
+    block_a: EmployeeContractBlock,
+    block_b: EmployeeContractBlock,
+    sage_no: int,
+    name_upper: str,
+    index: ContractFileIndex,
+) -> bool:
+    if block_a.source_row == block_b.source_row:
+        return True
+    if block_a.full_name and block_b.full_name and block_a.full_name.upper() == block_b.full_name.upper():
+        return True
+    sage_name = index.by_sage_name.get(sage_no, "").upper()
+    if sage_name and block_b.full_name.upper() == sage_name:
+        return True
+    if name_upper and block_b.full_name.upper() == name_upper:
+        return True
+    if name_upper and block_b.clock_name.upper() == name_upper:
+        return True
+    return False
+
+
+def _contract_candidates(
+    sage_no: int,
+    name_upper: str,
+    index: ContractFileIndex,
+) -> list[tuple[EmployeeContractBlock, str]]:
+    candidates: list[tuple[EmployeeContractBlock, str]] = []
+    seen_rows: set[int] = set()
+
+    def add(block: EmployeeContractBlock | None, reason: str) -> None:
+        if block is None or block.source_row in seen_rows:
+            return
+        seen_rows.add(block.source_row)
+        candidates.append((block, reason))
+
+    if sage_no in index.conflicted_pay_ids:
+        return candidates
+
+    add(index.pay_id_to_block.get(sage_no), "Pay ID")
+    add(index.name_to_block.get(name_upper), "employee name")
+    sage_name = index.by_sage_name.get(sage_no, "").upper()
+    if sage_name:
+        add(index.name_to_block.get(sage_name), "Sage name map")
+    clock_full = index.by_clock_name.get(name_upper, "").upper()
+    if clock_full:
+        add(index.name_to_block.get(clock_full), "clock name lookup")
+    return candidates
+
+
 def _resolve_contracted_hours(
     sage_no: int,
     name_upper: str,
-    by_payroll: dict[int, float],
-    by_name: dict[str, float],
-    by_clock_name: dict[str, str],
+    index: ContractFileIndex,
 ) -> tuple[float, str, str]:
     """Return (contracted hours, ContractHourMatch, ContractMatchReason)."""
-    hit = by_payroll.get(sage_no)
-    if hit is not None:
-        return float(hit), "Yes", "Matched on Pay ID"
-    hit = by_name.get(name_upper)
-    if hit:
-        return float(hit), "Yes", "Matched on employee name"
-    full = by_clock_name.get(name_upper)
-    if full:
-        hit = by_name.get(full.upper())
-        if hit:
-            return float(hit), "Yes", "Matched on employee name (clock name lookup)"
-    return 0.0, "No", "Pay ID not in contract export"
+    if sage_no in index.conflicted_pay_ids:
+        return 0.0, "Review", "Contract file ID conflict — manual review"
+
+    candidates = _contract_candidates(sage_no, name_upper, index)
+    if not candidates:
+        return 0.0, "No", "Pay ID not in contract export"
+
+    unique_blocks = {block.source_row: block for block, _ in candidates}
+    unique_hours = {block.contract_hours for block in unique_blocks.values()}
+    if len(unique_hours) > 1:
+        return 0.0, "Review", "Contract file ID conflict — manual review"
+
+    pay_block = index.pay_id_to_block.get(sage_no)
+    if pay_block is not None:
+        hours = pay_block.contract_hours
+        if hours == 0.0:
+            for block, reason in candidates:
+                if block.contract_hours > 0.0 and _same_person_blocks(pay_block, block, sage_no, name_upper, index):
+                    if reason == "Pay ID":
+                        continue
+                    return float(block.contract_hours), "Yes", f"Matched on {reason} (Pay ID had zero contract hours)"
+        return float(hours), "Yes", "Matched on Pay ID"
+
+    block, reason = candidates[0]
+    if reason == "employee name":
+        reason = "employee name"
+    elif reason == "clock name lookup":
+        reason = "employee name (clock name lookup)"
+    return float(block.contract_hours), "Yes", f"Matched on {reason}"
+
+
+def audit_contract_integrity(
+    employee_rows: list[dict[str, Any]],
+    contracted_file_obj: Any,
+    payroll_rows: list[dict[str, Any]] | None = None,
+) -> ContractAuditResult:
+    contracted_file_obj.seek(0)
+    index = load_contract_file_index(contracted_file_obj)
+    missing: list[dict[str, Any]] = []
+    for row in employee_rows:
+        sage_no = int(row["SageNo"])
+        if sage_no not in index.by_payroll:
+            missing.append(
+                {
+                    "SageNo": sage_no,
+                    "Name": row.get("Name"),
+                    "Category": row.get("Category"),
+                }
+            )
+    review: list[dict[str, Any]] = []
+    if payroll_rows:
+        for row in payroll_rows:
+            if row.get("ContractHourMatch") == "Review":
+                review.append(
+                    {
+                        "SageNo": row.get("SageNo"),
+                        "Name": row.get("Name"),
+                        "Category": row.get("Category"),
+                        "ContractMatchReason": row.get("ContractMatchReason"),
+                    }
+                )
+    return ContractAuditResult(missing=missing, conflicts=index.conflicts, review=review)
 
 
 def calculate_payroll(employee_rows: list[dict[str, Any]], contracted_file_obj: Any) -> PayrollResult:
     contracted_file_obj.seek(0)
-    by_payroll, by_name = parse_contracted_hours(contracted_file_obj)
-    contracted_file_obj.seek(0)
-    by_sage_name, by_clock_name = parse_employee_display_names(contracted_file_obj)
+    index = load_contract_file_index(contracted_file_obj)
 
     for row in employee_rows:
         name_upper = str(row["Name"]).upper()
-        contracted, match, reason = _resolve_contracted_hours(
-            int(row["SageNo"]), name_upper, by_payroll, by_name, by_clock_name
-        )
+        contracted, match, reason = _resolve_contracted_hours(int(row["SageNo"]), name_upper, index)
         row["ContractHourMatch"] = match
         row["ContractMatchReason"] = reason
         if match == "No":
@@ -547,11 +739,12 @@ def calculate_payroll(employee_rows: list[dict[str, Any]], contracted_file_obj: 
                 row.get("Name"),
                 reason,
             )
-        row["ContractedHours"] = contracted
-        row["Overtime"] = max(0.0, float(row["TotalPaidHours"]) - contracted)
+        row["ContractedHours"] = _round2(contracted)
+        row["Overtime"] = _round2(max(0.0, float(row["TotalPaidHours"]) - contracted))
+        _round_row_hours(row)
 
     for row in employee_rows:
-        full = by_sage_name.get(int(row["SageNo"])) or by_clock_name.get(str(row["Name"]).upper())
+        full = index.by_sage_name.get(int(row["SageNo"])) or index.by_clock_name.get(str(row["Name"]).upper())
         if full:
             row["Name"] = full
 
@@ -564,6 +757,29 @@ def calculate_payroll(employee_rows: list[dict[str, Any]], contracted_file_obj: 
         agency_rows=agency_rows,
         gazebo_rows=gazebo_rows,
         total_paid_hours=all_hours,
+    )
+
+
+_HOLIDAY_PAY_FACTOR = 0.1207
+
+
+def calculate_weekly_payroll(employee_rows: list[dict[str, Any]], contracted_file_obj: Any) -> PayrollResult:
+    """Like calculate_payroll, with clamped hours, ExtraHours, and AdditionalHolidayPay."""
+    result = calculate_payroll(employee_rows, contracted_file_obj)
+    for row in result.rows:
+        actual = max(0.0, float(row["TotalPaidHours"]))
+        contracted = max(0.0, float(row["ContractedHours"]))
+        row["TotalPaidHours"] = actual
+        row["ContractedHours"] = contracted
+        row.pop("Overtime", None)
+        row["ExtraHours"] = _round2(max(0.0, actual - contracted))
+        row["AdditionalHolidayPay"] = _round2(max(0.0, row["ExtraHours"] * _HOLIDAY_PAY_FACTOR))
+        _round_row_hours(row)
+    return PayrollResult(
+        rows=result.rows,
+        agency_rows=result.agency_rows,
+        gazebo_rows=result.gazebo_rows,
+        total_paid_hours=total_paid_hours_from_rows(result.rows),
     )
 
 
@@ -784,7 +1000,15 @@ def _append_emp_agency_total_block(ws, emp_agency_df: pd.DataFrame, start_row: i
     return r
 
 
-def build_excel_bytes(result: PayrollResult) -> bytes:
+def _apply_excel_two_decimal_format(workbook: Any) -> None:
+    for ws in workbook.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+                    cell.number_format = _EXCEL_NUM_FORMAT
+
+
+def build_excel_bytes(result: PayrollResult, *, column_rename: dict[str, str] | None = None) -> bytes:
     all_df = pd.DataFrame(result.rows)
     agency_df = pd.DataFrame(result.agency_rows)
     gazebo_df = pd.DataFrame(result.gazebo_rows)
@@ -792,6 +1016,15 @@ def build_excel_bytes(result: PayrollResult) -> bytes:
     emp_agency_df = build_emp_agency_total_df(result)
     category_hr_df = build_category_summary_hr_df(analysis_df)
     over60_df = build_hours_over_60_df(all_df)
+
+    if column_rename:
+        all_df = all_df.rename(columns=column_rename)
+        if not agency_df.empty:
+            agency_df = agency_df.rename(columns=column_rename)
+        if not gazebo_df.empty:
+            gazebo_df = gazebo_df.rename(columns=column_rename)
+        if not over60_df.empty:
+            over60_df = over60_df.rename(columns=column_rename)
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -842,6 +1075,7 @@ def build_excel_bytes(result: PayrollResult) -> bytes:
         emp_agency_df.to_excel(writer, sheet_name="EMP Agency Total", index=False)
         category_hr_df.to_excel(writer, sheet_name="Category summary", index=False)
         over60_df.to_excel(writer, sheet_name="Hours over 60", index=False)
+        _apply_excel_two_decimal_format(writer.book)
 
     output.seek(0)
     return output.getvalue()

@@ -1,0 +1,15 @@
+{% if contract_audit %}
+{% with missing_count=contract_audit.missing|length conflict_count=contract_audit.conflicts|length review_count=contract_audit.review|length %}
+{% if missing_count or conflict_count or review_count %}
+<div class="alert alert-warning mt-3 mb-0" role="alert">
+	<strong>Contract hours need attention.</strong>
+	<ul class="mb-2 mt-2">
+		{% if missing_count %}<li><strong>{{ missing_count }}</strong> employee(s) missing from the contract export (Contract match = No).</li>{% endif %}
+		{% if review_count %}<li><strong>{{ review_count }}</strong> employee(s) need manual review (Contract match = Review).</li>{% endif %}
+		{% if conflict_count %}<li><strong>{{ conflict_count }}</strong> duplicate Pay ID conflict(s) in the contract file.</li>{% endif %}
+	</ul>
+	<p class="mb-0 small">Check contracted hours before exporting. <a href="#weekly-results">Scroll to results</a> or use <strong>Show contract issues</strong> in the table filter.</p>
+</div>
+{% endif %}
+{% endwith %}
+{% endif %}

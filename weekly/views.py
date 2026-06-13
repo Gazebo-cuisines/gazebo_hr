@@ -18,17 +18,23 @@ from .payroll_service import (
 	PayrollResult,
 	_HOUR_BAND_COLS,
 	_sum_hour_bands,
+	audit_contract_integrity,
 	build_excel_bytes,
 	calculate_payroll,
+	calculate_weekly_payroll,
 	parse_employee_hours,
 	total_paid_hours_from_rows,
 )
 from .case_studies_data import CASE_STUDIES, get_case_study
 from .export_service import (
 	add_branding_cover_sheet,
+	add_weekly_branding_cover_sheet,
 	build_csv_bytes,
 	build_pdf_bytes,
+	build_weekly_csv_bytes,
+	build_weekly_pdf_bytes,
 	export_filename,
+	WEEKLY_EXPORT_HEADER_LABELS,
 )
 
 
@@ -148,7 +154,7 @@ def weekly_analytics_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any] | N
 @require_GET
 def home(request: HttpRequest):
 	if request.user.is_authenticated:
-		return redirect('weekly:weekly_report')
+		return redirect('weekly:daily_report')
 	return render(
 		request,
 		'weekly/home.html',
@@ -209,13 +215,13 @@ def dashboard(request: HttpRequest):
 
 
 @require_GET
-def weekly_help(request: HttpRequest):
+def daily_help(request: HttpRequest):
 	return render(
 		request,
-		'weekly/help_weekly.html',
+		'weekly/help_daily.html',
 		{
-			'title': 'Weekly report — How to use',
-			'page_heading': 'Weekly report — How to use',
+			'title': 'Daily report — How to use',
+			'page_heading': 'Daily report — How to use',
 		},
 	)
 
@@ -250,12 +256,93 @@ def case_study_detail(request: HttpRequest, case_id: str):
 	)
 
 
+def _contract_audit_from_session(result_data: dict[str, Any]) -> dict[str, Any]:
+	return result_data.get('contract_audit') or {'missing': [], 'conflicts': [], 'review': []}
+
+
+@require_http_methods(['GET', 'POST'])
+def daily_report(request: HttpRequest):
+	result_data = request.session.get('daily_last_result', {})
+	all_rows = result_data.get('rows', [])
+	preview_rows = all_rows[:200]
+	summary = result_data.get('summary', {})
+	contract_audit = _contract_audit_from_session(result_data)
+	weekly_analytics = weekly_analytics_from_rows(all_rows)
+
+	if request.method == 'POST':
+		employee_file = request.FILES.get('employee_file')
+		contracted_file = request.FILES.get('contracted_file')
+		if not employee_file or not contracted_file:
+			messages.error(request, 'Upload both files: employee hours and contracted hours.')
+			return redirect('weekly:daily_report')
+		try:
+			employee_rows = parse_employee_hours(employee_file)
+			payroll_result = calculate_payroll(employee_rows, contracted_file)
+			contracted_file.seek(0)
+			audit = audit_contract_integrity(employee_rows, contracted_file, payroll_result.rows)
+		except Exception as exc:
+			messages.error(request, f'Could not process files: {exc}')
+			return redirect('weekly:daily_report')
+
+		request.session['daily_last_result'] = {
+			'rows': payroll_result.rows,
+			'summary': {
+				'total_rows': len(payroll_result.rows),
+				'total_paid_hours': payroll_result.total_paid_hours,
+				'agency_rows': len(payroll_result.agency_rows),
+				'gazebo_rows': len(payroll_result.gazebo_rows),
+			},
+			'contract_audit': {
+				'missing': audit.missing,
+				'conflicts': audit.conflicts,
+				'review': audit.review,
+			},
+		}
+		request.session.modified = True
+		messages.success(request, f'Processed {len(payroll_result.rows)} employee rows.')
+		return redirect('weekly:daily_report')
+
+	return render(
+		request,
+		'weekly/daily_report.html',
+		{
+			'title': 'Daily report — Gazebo',
+			'page_heading': 'Daily report',
+			'preview_rows': preview_rows,
+			'summary': summary,
+			'contract_audit': contract_audit,
+			'weekly_analytics': weekly_analytics,
+		},
+	)
+
+
+@require_http_methods(['POST'])
+def daily_clear_results(request: HttpRequest):
+	request.session.pop('daily_last_result', None)
+	request.session.modified = True
+	messages.success(request, 'Previous results cleared.')
+	return redirect('weekly:daily_report')
+
+
+@require_GET
+def weekly_help(request: HttpRequest):
+	return render(
+		request,
+		'weekly/help_weekly.html',
+		{
+			'title': 'Weekly report — How to use',
+			'page_heading': 'Weekly report — How to use',
+		},
+	)
+
+
 @require_http_methods(['GET', 'POST'])
 def weekly_report(request: HttpRequest):
 	result_data = request.session.get('weekly_last_result', {})
 	all_rows = result_data.get('rows', [])
 	preview_rows = all_rows[:200]
 	summary = result_data.get('summary', {})
+	contract_audit = _contract_audit_from_session(result_data)
 	weekly_analytics = weekly_analytics_from_rows(all_rows)
 
 	if request.method == 'POST':
@@ -266,7 +353,9 @@ def weekly_report(request: HttpRequest):
 			return redirect('weekly:weekly_report')
 		try:
 			employee_rows = parse_employee_hours(employee_file)
-			payroll_result = calculate_payroll(employee_rows, contracted_file)
+			payroll_result = calculate_weekly_payroll(employee_rows, contracted_file)
+			contracted_file.seek(0)
+			audit = audit_contract_integrity(employee_rows, contracted_file, payroll_result.rows)
 		except Exception as exc:
 			messages.error(request, f'Could not process files: {exc}')
 			return redirect('weekly:weekly_report')
@@ -278,6 +367,11 @@ def weekly_report(request: HttpRequest):
 				'total_paid_hours': payroll_result.total_paid_hours,
 				'agency_rows': len(payroll_result.agency_rows),
 				'gazebo_rows': len(payroll_result.gazebo_rows),
+			},
+			'contract_audit': {
+				'missing': audit.missing,
+				'conflicts': audit.conflicts,
+				'review': audit.review,
 			},
 		}
 		request.session.modified = True
@@ -292,6 +386,7 @@ def weekly_report(request: HttpRequest):
 			'page_heading': 'Weekly report',
 			'preview_rows': preview_rows,
 			'summary': summary,
+			'contract_audit': contract_audit,
 			'weekly_analytics': weekly_analytics,
 		},
 	)
@@ -486,6 +581,63 @@ def health_api(request: HttpRequest):
 	return JsonResponse({'ok': True, 'app': 'weekly'})
 
 
+def _daily_session_data(request: HttpRequest) -> tuple[list[dict], dict]:
+	result_data = request.session.get('daily_last_result', {})
+	return result_data.get('rows', []), result_data.get('summary', {})
+
+
+@require_GET
+def download_daily_excel(request: HttpRequest):
+	rows, summary = _daily_session_data(request)
+	if not rows:
+		messages.error(request, 'No processed data available. Upload files first.')
+		return redirect('weekly:daily_report')
+
+	agency_rows = [r for r in rows if str(r.get('Category', '')).strip().upper() in AGENCY_CATEGORIES]
+	gazebo_rows = [r for r in rows if str(r.get('Category', '')).strip().upper() not in AGENCY_CATEGORIES]
+	payroll_result = PayrollResult(
+		rows=rows,
+		agency_rows=agency_rows,
+		gazebo_rows=gazebo_rows,
+		total_paid_hours=total_paid_hours_from_rows(rows),
+	)
+	file_bytes = build_excel_bytes(payroll_result)
+	try:
+		file_bytes = add_branding_cover_sheet(file_bytes, summary=summary)
+	except Exception:
+		pass
+	response = HttpResponse(
+		file_bytes,
+		content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+	)
+	response['Content-Disposition'] = f'attachment; filename="{export_filename("gazebo_daily_report", "xlsx")}"'
+	return response
+
+
+@require_GET
+def download_daily_csv(request: HttpRequest):
+	rows, summary = _daily_session_data(request)
+	if not rows:
+		messages.error(request, 'No processed data available. Upload files first.')
+		return redirect('weekly:daily_report')
+	file_bytes = build_csv_bytes(rows, summary=summary)
+	response = HttpResponse(file_bytes, content_type='text/csv; charset=utf-8')
+	response['Content-Disposition'] = f'attachment; filename="{export_filename("gazebo_daily_report", "csv")}"'
+	return response
+
+
+@require_GET
+def download_daily_pdf(request: HttpRequest):
+	rows, summary = _daily_session_data(request)
+	if not rows:
+		messages.error(request, 'No processed data available. Upload files first.')
+		return redirect('weekly:daily_report')
+	file_bytes = build_pdf_bytes(rows, summary=summary)
+	response = HttpResponse(file_bytes, content_type='application/pdf')
+	response['Content-Disposition'] = f'attachment; filename="{export_filename("gazebo_daily_report", "pdf")}"'
+	return response
+
+
 def _weekly_session_data(request: HttpRequest) -> tuple[list[dict], dict]:
 	result_data = request.session.get('weekly_last_result', {})
 	return result_data.get('rows', []), result_data.get('summary', {})
@@ -506,9 +658,9 @@ def download_weekly_excel(request: HttpRequest):
 		gazebo_rows=gazebo_rows,
 		total_paid_hours=total_paid_hours_from_rows(rows),
 	)
-	file_bytes = build_excel_bytes(payroll_result)
+	file_bytes = build_excel_bytes(payroll_result, column_rename=WEEKLY_EXPORT_HEADER_LABELS)
 	try:
-		file_bytes = add_branding_cover_sheet(file_bytes, summary=summary)
+		file_bytes = add_weekly_branding_cover_sheet(file_bytes, summary=summary)
 	except Exception:
 		pass
 	response = HttpResponse(
@@ -525,7 +677,7 @@ def download_weekly_csv(request: HttpRequest):
 	if not rows:
 		messages.error(request, 'No processed data available. Upload files first.')
 		return redirect('weekly:weekly_report')
-	file_bytes = build_csv_bytes(rows, summary=summary)
+	file_bytes = build_weekly_csv_bytes(rows, summary=summary)
 	response = HttpResponse(file_bytes, content_type='text/csv; charset=utf-8')
 	response['Content-Disposition'] = f'attachment; filename="{export_filename("gazebo_weekly_report", "csv")}"'
 	return response
@@ -537,7 +689,7 @@ def download_weekly_pdf(request: HttpRequest):
 	if not rows:
 		messages.error(request, 'No processed data available. Upload files first.')
 		return redirect('weekly:weekly_report')
-	file_bytes = build_pdf_bytes(rows, summary=summary)
+	file_bytes = build_weekly_pdf_bytes(rows, summary=summary)
 	response = HttpResponse(file_bytes, content_type='application/pdf')
 	response['Content-Disposition'] = f'attachment; filename="{export_filename("gazebo_weekly_report", "pdf")}"'
 	return response
