@@ -1,31 +1,9 @@
 {% extends "weekly/dashboard_base.html" %}
 {% block dashboard_content %}
 <h1 class="heading-xl">{{ page_heading }}</h1>
-<p class="lead">Upload four (or five) daily workbooks — <strong>Download Excel</strong> from the Daily report (<code>gazebo_daily_report_*.xlsx</code>, <code>All Data</code> sheet) or legacy week layout (.xls) — then download the combined monthly workbook.</p>
-<p class="text-secondary small" style="max-width:40rem">
-	<button type="button" class="btn btn-link p-0 align-baseline" id="btn-monthly-help" data-bs-toggle="modal" data-bs-target="#monthlyHelpModal">How the monthly report works (overview)</button>
-	— <span class="text-body-secondary">Each input is a <strong>weekly</strong> output workbook (xls/xlsx). Click <strong>Help</strong> next to any field.</span>
-</p>
+<p class="lead">Upload four (or five) daily workbooks — <strong>Download Excel</strong> from the Weekly report  or legacy week layout (.xls)</p>
 
-<div class="modal fade" id="monthlyHelpModal" data-bs-backdrop="false" data-bs-keyboard="true" tabindex="-1" aria-labelledby="monthlyHelpModalLabel" aria-hidden="true">
-	<div class="modal-dialog modal-lg modal-dialog-scrollable">
-		<div class="modal-content">
-			<div class="modal-header">
-				<h2 class="modal-title h5" id="monthlyHelpModalLabel">How the monthly report works</h2>
-				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close help"></button>
-			</div>
-			<div class="modal-body help-prose" tabindex="-1">
-				<ol class="ps-3 mb-0">
-					<li class="mb-2">You upload <strong>4 or 5</strong> daily report workbooks (output of the Daily report page).</li>
-					<li class="mb-2">Each workbook is parsed for its <strong>employees</strong>, <strong>adjustments</strong>, <strong>category totals</strong> and <strong>date range</strong>.</li>
-					<li class="mb-2">Optionally paste <strong>non-hourly</strong> employee names (one per line) — these are subtracted on the Summary sheet. Agency (<code>A-…</code>) names cannot be non-hourly and will be rejected.</li>
-					<li class="mb-2">Click <strong>Process files</strong> to validate and store the data in your session.</li>
-					<li class="mb-0">Click <strong>Download Excel</strong> to get a combined workbook: one sheet per week plus a <strong>Summary</strong> sheet with merged employees, category totals, non-hourly adjustments and grouped/non-agency totals.</li>
-				</ol>
-			</div>
-		</div>
-	</div>
-</div>
+
 
 <div class="modal fade" id="helpWeeklyFileModal" data-bs-backdrop="false" data-bs-keyboard="true" tabindex="-1" aria-labelledby="helpWeeklyFileModalLabel" aria-hidden="true">
 	<div class="modal-dialog modal-lg modal-dialog-scrollable">
