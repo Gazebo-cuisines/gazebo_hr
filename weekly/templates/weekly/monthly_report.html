@@ -18,9 +18,8 @@
 				<ol class="ps-3 mb-0">
 					<li class="mb-2">You upload <strong>4 or 5</strong> daily report workbooks (output of the Daily report page).</li>
 					<li class="mb-2">Each workbook is parsed for its <strong>employees</strong>, <strong>adjustments</strong>, <strong>category totals</strong> and <strong>date range</strong>.</li>
-					<li class="mb-2">Optionally paste <strong>non-hourly</strong> employee names (one per line) — these are subtracted on the Summary sheet. Agency (<code>A-…</code>) names cannot be non-hourly and will be rejected.</li>
 					<li class="mb-2">Click <strong>Process files</strong> to validate and store the data in your session.</li>
-					<li class="mb-0">Click <strong>Download Excel</strong> to get a combined workbook: one sheet per week plus a <strong>Summary</strong> sheet with merged employees, category totals, non-hourly adjustments and grouped/non-agency totals.</li>
+					<li class="mb-0">Click <strong>Download Excel</strong> to get a combined workbook: one sheet per week plus a <strong>Summary</strong> sheet with merged employees, category totals, and grouped/non-agency totals.</li>
 				</ol>
 			</div>
 		</div>
@@ -45,22 +44,6 @@
 	</div>
 </div>
 
-<div class="modal fade" id="helpNonHourlyModal" data-bs-backdrop="false" data-bs-keyboard="true" tabindex="-1" aria-labelledby="helpNonHourlyModalLabel" aria-hidden="true">
-	<div class="modal-dialog modal-lg modal-dialog-scrollable">
-		<div class="modal-content">
-			<div class="modal-header">
-				<h2 class="modal-title h5" id="helpNonHourlyModalLabel">Non-hourly employees</h2>
-				<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close help"></button>
-			</div>
-			<div class="modal-body help-prose small" tabindex="-1">
-				<p class="mb-2"><span class="fw-bold text-body">What it is</span> — salaried / non-hourly staff whose hours should be <strong>subtracted</strong> from the category totals on the Summary sheet.</p>
-				<p class="mb-2"><span class="fw-bold text-body">Format</span> — one <strong>full name</strong> per line (case-insensitive). Empty lines are ignored.</p>
-				<p class="mb-0"><span class="fw-bold text-body">Rule</span> — names in an agency category (starts with <code>A-</code>) cannot be non-hourly; the page will reject these.</p>
-			</div>
-		</div>
-	</div>
-</div>
-
 <div class="card shadow-sm">
 	<div class="card-body bg-light">
 		<form class="weekly-form" method="post" enctype="multipart/form-data" id="monthly-upload-form">
@@ -76,14 +59,7 @@
 					<div class="col-12 col-md-6 col-xl">
 						<label class="form-label small mb-1" for="id_week{{ forloop.counter }}">Week {{ forloop.counter }}{% if forloop.counter == 5 %} (optional){% endif %}</label>
 						<input id="id_week{{ forloop.counter }}" class="form-control form-control-sm" type="file" name="week{{ forloop.counter }}" accept=".xls,.xlsx"{% if forloop.counter != 5 %} required{% endif %}>
-						<div class="row g-1 mt-1">
-							<div class="col-6">
-								<input id="id_week{{ forloop.counter }}_start" class="form-control form-control-sm" type="text" name="week{{ forloop.counter }}_start" placeholder="Start DD/MM/YYYY" value="{{ wd.start }}">
-							</div>
-							<div class="col-6">
-								<input id="id_week{{ forloop.counter }}_end" class="form-control form-control-sm" type="text" name="week{{ forloop.counter }}_end" placeholder="End DD/MM/YYYY" value="{{ wd.end }}">
-							</div>
-						</div>
+						
 					</div>
 					{% endfor %}
 				</div>
@@ -91,15 +67,6 @@
 					<input class="form-check-input" type="checkbox" id="id_use_week5" name="use_week5" value="1">
 					<label class="form-check-label" for="id_use_week5">Include week 5 (require 5 files instead of 4)</label>
 				</div>
-			</div>
-			<div class="mb-3">
-				<div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
-					<label class="form-label mb-0" for="id_non_hourly_names">Non-hourly employee names</label>
-					<button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#helpNonHourlyModal">Help</button>
-				</div>
-				<p class="form-text">Optional. One full name per line. Agency (<code>A-…</code>) names are not allowed.</p>
-				<textarea id="id_non_hourly_names" class="form-control" name="non_hourly_names" rows="3" placeholder="JOHN SMITH&#10;JANE DOE">{% for n in non_hourly_names %}{{ n }}
-{% endfor %}</textarea>
 			</div>
 			<div class="d-flex flex-wrap gap-2 align-items-center">
 				{% include "weekly/components/button_submit.html" with label="Process files" variant="primary" id="btn-process-monthly" %}

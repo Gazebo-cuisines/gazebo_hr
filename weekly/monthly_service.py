@@ -17,7 +17,9 @@ _HOLIDAY_PAY_KEYS = ("ContractedHours", "ExtraHours", "AdditionalHolidayPay")
 _EMPLOYEE_VALUE_KEYS = _BAND_KEYS + _HOLIDAY_PAY_KEYS
 _EMP_AGENCY_ROWS = ("EMP", "AGENCY", "TOTAL")
 _SHEET_LAST_COL = 11
+_PAY_ID_COL = 3
 _NUM_FORMAT = "0.00"
+_INTEGER_FORMAT = "0"
 _PRIMARY_BLUE = "003078"
 
 _MONTHLY_BORDER = Border(
@@ -59,7 +61,6 @@ class MonthlyEmployee:
     ContractedHours: float = 0.0
     ExtraHours: float = 0.0
     AdditionalHolidayPay: float = 0.0
-    IsHourly: bool = True
 
 
 @dataclass
@@ -545,7 +546,10 @@ def _apply_table_style(
             elif isinstance(cell.value, (int, float)) or (
                 isinstance(cell.value, str) and str(cell.value).startswith("=")
             ):
-                cell.number_format = _NUM_FORMAT
+                if c == _PAY_ID_COL and isinstance(cell.value, (int, float)):
+                    cell.number_format = _INTEGER_FORMAT
+                else:
+                    cell.number_format = _NUM_FORMAT
                 cell.alignment = Alignment(horizontal="right", vertical="center")
 
 
@@ -680,7 +684,7 @@ def _write_adjustment_header(ws, r: int) -> None:
 def _write_employee_row(ws, r: int, e: MonthlyEmployee) -> None:
     ws.cell(r, 1, e.Name)
     ws.cell(r, 2, e.Category)
-    ws.cell(r, 3, e.SageNo)
+    ws.cell(r, 3, int(e.SageNo))
     values = (
         e.BasicHours,
         e.MonFriOvertime,
@@ -990,7 +994,7 @@ def _write_employee_table_cross_week(
     for e in employees:
         ws.cell(r, 1, e.Name)
         ws.cell(r, 2, e.Category)
-        ws.cell(r, 3, e.SageNo)
+        ws.cell(r, 3, int(e.SageNo))
         name_ref = f"$A{r}"
         for j in range(len(_EMPLOYEE_VALUE_KEYS)):
             ws.cell(r, _employee_value_col_index(j), _xl_cross_week_sumif(name_ref, week_sheet_names, _employee_value_col_index(j)))
@@ -1116,7 +1120,6 @@ def _write_summary_category_formulas(
     r: int,
     categories: list[str],
     emp_layout: EmployeeTableLayout,
-    merged_employees: dict[str, MonthlyEmployee],
 ) -> int:
     r = _write_section_title(
         ws,
@@ -1134,18 +1137,6 @@ def _write_summary_category_formulas(
         for j in range(5):
             ws.cell(r, _band_col_index(j), _xl_sumifs_category(r, ds, de, _band_col_index(j)))
         r += 1
-        non_hourly = [
-            e for e in merged_employees.values()
-            if not e.IsHourly and e.Category.upper() == category.upper()
-        ]
-        if non_hourly:
-            ws.cell(r, 2, f"{category} non-hourly hours")
-            ws.cell(r, 4, -sum(e.BasicHours for e in non_hourly))
-            ws.cell(r, 5, -sum(e.MonFriOvertime for e in non_hourly))
-            ws.cell(r, 6, -sum(e.SatSunOvertime for e in non_hourly))
-            ws.cell(r, 7, -sum(e.AnnualHoliday for e in non_hourly))
-            ws.cell(r, 8, -sum(e.TotalPaidHours for e in non_hourly))
-            r += 1
     if r > cat_data_start:
         _apply_table_style(ws, header_row, r - 1, 1, _SHEET_LAST_COL, header_row=header_row)
     else:
@@ -1155,7 +1146,6 @@ def _write_summary_category_formulas(
 
 def build_monthly_excel_bytes(
     week_summaries: list[MonthlyWeekSummary],
-    non_hourly_names: set[str] | None = None,
 ) -> bytes:
     wb = Workbook()
     wb.remove(wb.active)
@@ -1257,13 +1247,6 @@ def build_monthly_excel_bytes(
             cur_t.AnnualHoliday += t.AnnualHoliday
             cur_t.TotalPaidHours += t.TotalPaidHours
 
-    non_hourly_names = {n.strip().upper() for n in (non_hourly_names or set()) if n and n.strip()}
-    for e in merged_employees.values():
-        if e.Name.strip().upper() in non_hourly_names:
-            e.IsHourly = False
-        if not e.IsHourly and is_agency_category(e.Category):
-            raise ValueError(f"Agency employee cannot be non-hourly: {e.Name}")
-
     week_sheet_names = [wl.sheet_name for wl in week_layouts]
     summary_start = week_summaries[0].start_date if week_summaries else ""
     summary_end = week_summaries[-1].end_date if week_summaries else ""
@@ -1283,7 +1266,6 @@ def build_monthly_excel_bytes(
         r,
         list(merged_totals.keys()),
         summary_emp_layout,
-        merged_employees,
     )
 
     agg_grouped: dict[str, MonthlyEmployeeTotal] = {}

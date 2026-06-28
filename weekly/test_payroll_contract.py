@@ -869,7 +869,7 @@ class Bug1528ContractHoursRegressionTest(unittest.TestCase):
         with _BUG1528_CONTRACT.open("rb") as f:
             by_payroll, by_name = parse_contracted_hours(f)
         self.assertAlmostEqual(by_payroll[691], 8.0)
-        self.assertAlmostEqual(by_payroll[1160], 8.0)
+        self.assertNotIn(1160, by_payroll)
         self.assertAlmostEqual(by_name["UTSAV GOHEL"], 8.0)
 
     @unittest.skipUnless(_BUG1528_EMPLOYEE.is_file(), "data/bug1528 employee fixture not in repo")
@@ -905,6 +905,40 @@ class AdjacentBlockSageAliasRegressionTest(unittest.TestCase):
         by_payroll, _ = parse_contracted_hours(buf)
         self.assertAlmostEqual(by_payroll[691], 8.0)
         self.assertAlmostEqual(by_payroll[1648], 0.0)
+
+
+_TEST_DATA_MONTH_DIR = _DATA / "month" / "test_data_month"
+_TEST_DATA_MONTH_EMPLOYEE = _TEST_DATA_MONTH_DIR / "w1_dgross_paysummary2.xls"
+_TEST_DATA_MONTH_CONTRACT = _TEST_DATA_MONTH_DIR / "demployees_2023.xls"
+
+
+@unittest.skipUnless(
+    _TEST_DATA_MONTH_EMPLOYEE.is_file() and _TEST_DATA_MONTH_CONTRACT.is_file(),
+    "data/month/test_data_month fixtures not in repo",
+)
+class TestDataMonthContractAuditRegressionTest(unittest.TestCase):
+    """Prox/card IDs and recycled clock names must not create false contract conflicts."""
+
+    def test_all_employees_match_without_audit_noise(self) -> None:
+        with _TEST_DATA_MONTH_EMPLOYEE.open("rb") as ef, _TEST_DATA_MONTH_CONTRACT.open("rb") as cf:
+            employees = parse_employee_hours(ef)
+            result = calculate_payroll(employees, cf)
+            cf.seek(0)
+            audit = audit_contract_integrity(employees, cf, result.rows)
+
+        self.assertEqual(len(result.rows), 200)
+        self.assertTrue(all(r["ContractHourMatch"] == "Yes" for r in result.rows))
+        self.assertEqual(audit.missing, [])
+        self.assertEqual(audit.conflicts, [])
+        self.assertEqual(audit.review, [])
+
+    def test_sage_737_resolves_to_twenty_contracted_hours(self) -> None:
+        with _TEST_DATA_MONTH_EMPLOYEE.open("rb") as ef, _TEST_DATA_MONTH_CONTRACT.open("rb") as cf:
+            result = calculate_payroll(parse_employee_hours(ef), cf)
+        row = next(r for r in result.rows if r["SageNo"] == 737)
+        self.assertEqual(row["ContractedHours"], 20.0)
+        self.assertEqual(row["ContractHourMatch"], "Yes")
+        self.assertEqual(row["ContractMatchReason"], "Matched on Pay ID")
 
 
 class DuplicatePayIdConflictTest(unittest.TestCase):

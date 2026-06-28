@@ -21,7 +21,6 @@ from .payroll_service import (
 	build_excel_bytes,
 	calculate_payroll,
 	calculate_weekly_payroll,
-	is_agency_category,
 	parse_employee_hours,
 	split_emp_agency_rows,
 	total_paid_hours_from_rows,
@@ -400,14 +399,6 @@ def weekly_clear_results(request: HttpRequest):
 	return redirect('weekly:weekly_report')
 
 
-def _parse_non_hourly_names(raw: str) -> set[str]:
-	names: set[str] = set()
-	for line in (raw or '').splitlines():
-		n = line.strip()
-		if n:
-			names.add(n.upper())
-	return names
-
 
 def _monthly_context(session_blob: dict) -> dict:
 	raw = session_blob.get('summaries_json') or []
@@ -475,7 +466,6 @@ def _monthly_context(session_blob: dict) -> dict:
 		'week_cards': week_cards,
 		'week_count': len(summaries),
 		'week_date_fields': week_date_fields,
-		'non_hourly_names': session_blob.get('non_hourly') or [],
 		'category_totals': category_totals,
 		'grouped_totals': grouped_totals,
 		'summary_stats': {
@@ -517,15 +507,8 @@ def monthly_report(request: HttpRequest):
 						f'Week {wi}: no employees found in All Data — check file format.',
 					)
 					return redirect('weekly:monthly_report')
-			non_hourly = _parse_non_hourly_names(request.POST.get('non_hourly_names', ''))
-			for s in summaries:
-				for e in s.employees:
-					if e.Name.strip().upper() in non_hourly and is_agency_category(e.Category):
-						messages.error(request, f'Agency employee must be hourly: {e.Name}')
-						return redirect('weekly:monthly_report')
 			request.session['monthly_last'] = {
 				'summaries_json': monthly_summaries_to_json(summaries),
-				'non_hourly': sorted(non_hourly),
 				'week_count': len(summaries),
 				'week_dates': week_dates[: len(summaries)],
 			}
@@ -554,8 +537,7 @@ def download_monthly_excel(request: HttpRequest):
 		return redirect('weekly:monthly_report')
 	try:
 		summaries = monthly_summaries_from_json(raw)
-		non_hourly = set(blob.get('non_hourly') or [])
-		file_bytes = build_monthly_excel_bytes(summaries, non_hourly_names=non_hourly)
+		file_bytes = build_monthly_excel_bytes(summaries)
 	except Exception as exc:
 		messages.error(request, f'Could not build Excel: {exc}')
 		return redirect('weekly:monthly_report')
