@@ -409,9 +409,10 @@ def _parse_clockrite_blocks(rows: list[list[str]]) -> list[EmployeeContractBlock
 
 
 def _block_pay_ids(block: EmployeeContractBlock) -> list[int]:
+    """Sage/payroll identifiers only. Prox ID and Title ID are badge/card numbers."""
     ids: list[int] = []
-    for value in (block.payroll_number, block.sage_pay_ref, block.prox_id, block.title_id):
-        if value is not None and value > 0:
+    for value in (block.payroll_number, block.sage_pay_ref):
+        if value is not None and value > 0 and value not in ids:
             ids.append(value)
     return ids
 
@@ -476,7 +477,6 @@ def _build_contract_index_from_blocks(blocks: list[EmployeeContractBlock]) -> Co
         if block.full_name:
             register_name(block.full_name, block)
         if block.clock_name:
-            register_name(block.clock_name, block)
             by_clock_name[block.clock_name.upper()] = block.full_name
 
     return ContractFileIndex(
