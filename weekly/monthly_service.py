@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from io import BytesIO
 from typing import Any
 
@@ -494,13 +494,18 @@ def monthly_summaries_to_json(summaries: list[MonthlyWeekSummary]) -> list[dict[
     return [asdict(s) for s in summaries]
 
 
+def _dataclass_from_dict(cls: type, data: dict[str, Any]) -> Any:
+    valid = {f.name for f in fields(cls)}
+    return cls(**{k: v for k, v in data.items() if k in valid})
+
+
 def monthly_summaries_from_json(data: list[dict[str, Any]]) -> list[MonthlyWeekSummary]:
     out: list[MonthlyWeekSummary] = []
     for d in data:
         s = MonthlyWeekSummary(
-            employees=[MonthlyEmployee(**e) for e in d.get("employees", [])],
-            employee_totals=[MonthlyEmployeeTotal(**t) for t in d.get("employee_totals", [])],
-            adjustments=[MonthlyAdjustment(**a) for a in d.get("adjustments", [])],
+            employees=[_dataclass_from_dict(MonthlyEmployee, e) for e in d.get("employees", [])],
+            employee_totals=[_dataclass_from_dict(MonthlyEmployeeTotal, t) for t in d.get("employee_totals", [])],
+            adjustments=[_dataclass_from_dict(MonthlyAdjustment, a) for a in d.get("adjustments", [])],
             start_date=str(d.get("start_date", "")),
             end_date=str(d.get("end_date", "")),
             non_agency_total=float(d.get("non_agency_total", 0.0)),
@@ -511,7 +516,7 @@ def monthly_summaries_from_json(data: list[dict[str, Any]]) -> list[MonthlyWeekS
         s.grouped_totals = {}
         for k, v in (d.get("grouped_totals") or {}).items():
             if isinstance(v, dict):
-                s.grouped_totals[str(k)] = MonthlyEmployeeTotal(**v)
+                s.grouped_totals[str(k)] = _dataclass_from_dict(MonthlyEmployeeTotal, v)
         if not s.emp_agency_bands and s.employees:
             _enrich_week_summary(s)
         out.append(s)
