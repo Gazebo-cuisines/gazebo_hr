@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from io import BytesIO
 from typing import Any
 
@@ -25,6 +26,9 @@ _CLOCKRITE_PAY_ID_COL = 1
 _CLOCKRITE_SAGE_HEADER_COL = 3
 _CLOCKRITE_ANNUAL_H_COL = 7
 _CLOCKRITE_ANNUAL_L_COL = 11
+# ClockRite Paid Hours summary: report date in Excel A5 (0-based row 4, col 0).
+_CLOCKRITE_PROCESSING_DATE_ROW = 4
+_CLOCKRITE_PROCESSING_DATE_COL = 0
 
 # Appended category breakdown / grand total (matches monthly export layout).
 _CATEGORY_COL = 2
@@ -116,6 +120,35 @@ def total_paid_hours_from_rows(rows: list[dict[str, Any]]) -> float:
     return round(sum(float(r.get("TotalPaidHours", 0.0)) for r in rows), 2)
 
 
+def _work_hours(row: dict[str, Any]) -> float:
+    return (
+        float(row.get("BasicHours", 0.0) or 0.0)
+        + float(row.get("MonFriOvertime", 0.0) or 0.0)
+        + float(row.get("SatSunOvertime", 0.0) or 0.0)
+    )
+
+
+def build_staff_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Headcounts for Day Report cover: agency, gazebo worked, gazebo paid-holiday only."""
+    gazebo_rows, agency_rows = split_emp_agency_rows(rows)
+    agency_staff = sum(1 for r in agency_rows if float(r.get("TotalPaidHours", 0.0) or 0.0) > 0)
+    gazebo_paid_holiday = sum(
+        1
+        for r in gazebo_rows
+        if float(r.get("TotalPaidHours", 0.0) or 0.0) > 0
+        and float(r.get("AnnualHoliday", 0.0) or 0.0) > 0
+        and _work_hours(r) == 0
+    )
+    gazebo_staff = sum(1 for r in gazebo_rows if _work_hours(r) > 0)
+    return {
+        "total_staff": agency_staff + gazebo_staff + gazebo_paid_holiday,
+        "agency_staff": agency_staff,
+        "gazebo_staff": gazebo_staff,
+        "gazebo_paid_holiday": gazebo_paid_holiday,
+        "total_paid_hours": total_paid_hours_from_rows(rows),
+    }
+
+
 def _normalize_header(text: str) -> str:
     return "".join(ch.lower() for ch in (text or "") if ch.isalnum())
 
@@ -194,6 +227,35 @@ def _is_category_row(row: list[str], pay_id_col: int) -> bool:
 def _load_sheet(file_obj: Any) -> pd.DataFrame:
     file_obj.seek(0)
     return pd.read_excel(file_obj, sheet_name=0, header=None, dtype=str)
+
+
+def _parse_date_cell(text: str) -> datetime | None:
+    text = text.strip()
+    if not text:
+        return None
+    candidates = [text]
+    if " " in text:
+        candidates.append(text.split(" ", 1)[0])
+    formats = ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%d.%m.%Y")
+    for candidate in candidates:
+        for fmt in formats:
+            try:
+                return datetime.strptime(candidate, fmt)
+            except ValueError:
+                continue
+    return None
+
+
+def parse_processing_date(file_obj: Any) -> str | None:
+    """Report date from ClockRite employee hours file cell A5, as DD.MM.YYYY."""
+    df = _load_sheet(file_obj)
+    if df.shape[0] <= _CLOCKRITE_PROCESSING_DATE_ROW:
+        return None
+    raw = df.iat[_CLOCKRITE_PROCESSING_DATE_ROW, _CLOCKRITE_PROCESSING_DATE_COL]
+    parsed = _parse_date_cell(_to_text(raw))
+    if parsed is None:
+        return None
+    return parsed.strftime("%d.%m.%Y")
 
 
 def parse_employee_hours(file_obj: Any) -> list[dict[str, Any]]:
@@ -1046,10 +1108,22 @@ def _apply_excel_two_decimal_format(workbook: Any) -> None:
                     cell.number_format = _EXCEL_NUM_FORMAT
 
 
-def build_excel_bytes(result: PayrollResult, *, column_rename: dict[str, str] | None = None) -> bytes:
-    all_df = pd.DataFrame(result.rows)
-    agency_df = pd.DataFrame(result.agency_rows)
-    gazebo_df = pd.DataFrame(result.gazebo_rows)
+def _select_export_columns(df: pd.DataFrame, columns: list[str] | None) -> pd.DataFrame:
+    if df.empty or not columns:
+        return df
+    present = [c for c in columns if c in df.columns]
+    return df[present]
+
+
+def build_excel_bytes(
+    result: PayrollResult,
+    *,
+    column_rename: dict[str, str] | None = None,
+    employee_columns: list[str] | None = None,
+) -> bytes:
+    all_df = _select_export_columns(pd.DataFrame(result.rows), employee_columns)
+    agency_df = _select_export_columns(pd.DataFrame(result.agency_rows), employee_columns)
+    gazebo_df = _select_export_columns(pd.DataFrame(result.gazebo_rows), employee_columns)
     analysis_df = _build_analysis_dataframe(all_df)
     emp_agency_df = build_emp_agency_total_df(result)
     category_hr_df = build_category_summary_hr_df(analysis_df)
