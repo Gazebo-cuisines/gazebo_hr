@@ -61,6 +61,14 @@ def _round_row_hours(row: dict[str, Any]) -> None:
     for key in _HOUR_DECIMAL_FIELDS:
         if key in row and row[key] is not None:
             row[key] = _round2(row[key])
+    # Legacy: Total = sum of rounded bands (not sum-then-round).
+    if "TotalPaidHours" in row:
+        row["TotalPaidHours"] = _round2(
+            float(row.get("BasicHours") or 0)
+            + float(row.get("MonFriOvertime") or 0)
+            + float(row.get("SatSunOvertime") or 0)
+            + float(row.get("AnnualHoliday") or 0)
+        )
 
 
 def _parse_int(value: Any) -> int | None:
