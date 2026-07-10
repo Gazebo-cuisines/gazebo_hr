@@ -3,6 +3,7 @@ venv/
 .venv/
 env/
 ec2/
+data/   
 
 # Python
 __pycache__/
