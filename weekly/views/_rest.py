@@ -1,34 +1,16 @@
+"""Views not yet split into feature modules (Chunk 11)."""
+
+from __future__ import annotations
+
 from typing import Any
 
-from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
-from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_GET, require_http_methods
 
-from .monthly_service import (
-	build_monthly_excel_bytes,
-	monthly_summaries_from_json,
-	monthly_summaries_to_json,
-	parse_monthly_inputs,
-)
-from .payroll_service import (
-	PayrollResult,
-	_HOUR_BAND_COLS,
-	_sum_hour_bands,
-	audit_contract_integrity,
-	build_excel_bytes,
-	build_staff_summary,
-	calculate_payroll,
-	calculate_weekly_payroll,
-	parse_employee_hours,
-	parse_processing_date,
-	split_emp_agency_rows,
-	total_paid_hours_from_rows,
-)
-from .case_studies_data import CASE_STUDIES, get_case_study
-from .export_service import (
+from ..case_studies_data import CASE_STUDIES, get_case_study
+from ..export_service import (
 	EXPORT_COLUMNS,
 	add_branding_cover_sheet,
 	add_weekly_branding_cover_sheet,
@@ -42,193 +24,19 @@ from .export_service import (
 	week_report_filename,
 	WEEKLY_EXPORT_HEADER_LABELS,
 )
-
-
-def _hours_to_float(value: Any) -> float:
-	if value is None:
-		return 0.0
-	if isinstance(value, (int, float)):
-		return float(value)
-	s = str(value).strip().replace(',', '')
-	if not s:
-		return 0.0
-	try:
-		return float(s)
-	except ValueError:
-		return 0.0
-
-
-def _rollup_categories(rows: list[dict[str, Any]], top_n: int = 10) -> tuple[list[str], list[float], list[int]]:
-	from collections import defaultdict
-
-	hours: dict[str, float] = defaultdict(float)
-	counts: dict[str, int] = defaultdict(int)
-	for row in rows:
-		cat = str(row.get('Category') or '').strip() or '(none)'
-		hours[cat] += _hours_to_float(row.get('TotalPaidHours'))
-		counts[cat] += 1
-	ordered = sorted(hours.keys(), key=lambda c: hours[c], reverse=True)
-	if len(ordered) <= top_n:
-		labels = ordered
-		h_vals = [round(hours[c], 2) for c in labels]
-		c_vals = [counts[c] for c in labels]
-		return labels, h_vals, c_vals
-	top = ordered[:top_n]
-	rest = ordered[top_n:]
-	h_other = sum(hours[c] for c in rest)
-	c_other = sum(counts[c] for c in rest)
-	labels = top + ['Other']
-	h_vals = [round(hours[c], 2) for c in top] + [round(h_other, 2)]
-	c_vals = [counts[c] for c in top] + [c_other]
-	return labels, h_vals, c_vals
-
-
-def weekly_analytics_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
-	if not rows:
-		return None
-	buckets = [0, 0, 0, 0]
-	over_60: list[dict[str, Any]] = []
-	for row in rows:
-		h = _hours_to_float(row.get('TotalPaidHours'))
-		if h < 40:
-			buckets[0] += 1
-		elif h < 48:
-			buckets[1] += 1
-		elif h < 60:
-			buckets[2] += 1
-		else:
-			buckets[3] += 1
-		if h >= 60.0:
-			over_60.append(
-				{
-					'Name': row.get('Name') or '',
-					'SageNo': row.get('SageNo'),
-					'Category': row.get('Category') or '',
-					'TotalPaidHours': h,
-				}
-			)
-	over_60.sort(key=lambda x: x['TotalPaidHours'], reverse=True)
-
-	gazebo_rows, agency_rows = split_emp_agency_rows(rows)
-	emp_totals = _sum_hour_bands(gazebo_rows)
-	ag_totals = _sum_hour_bands(agency_rows)
-	cat_labels, cat_hours, cat_counts = _rollup_categories(rows)
-	_palette = [
-		'#005ea5',
-		'#85994b',
-		'#f47738',
-		'#528187',
-		'#7d4b8c',
-		'#b10e1e',
-		'#ffbf47',
-		'#5694ca',
-		'#67874e',
-		'#f499be',
-		'#505a5f',
-	]
-	_colors = [_palette[i % len(_palette)] for i in range(len(cat_labels))]
-
-	return {
-		'total_people': len(rows),
-		'over_60_count': len(over_60),
-		'over_60': over_60[:200],
-		'chart': {
-			'labels': ['Under 40 h', '40–48 h', '48–60 h', '60+ h'],
-			'counts': buckets,
-		},
-		'extra_charts': {
-			'category': {
-				'labels': cat_labels,
-				'hours': cat_hours,
-				'counts': cat_counts,
-				'colors': _colors,
-			},
-			'empAgency': {
-				'bandLabels': ['Basic', 'Mon–Fri OT', 'Sat–Sun OT', 'Annual', 'Total paid'],
-				'emp': [round(emp_totals[k], 2) for k in _HOUR_BAND_COLS],
-				'agency': [round(ag_totals[k], 2) for k in _HOUR_BAND_COLS],
-			},
-			'totalPaidSplit': {
-				'emp': round(float(emp_totals['TotalPaidHours']), 2),
-				'agency': round(float(ag_totals['TotalPaidHours']), 2),
-			},
-		},
-	}
-
-
-@require_GET
-def home(request: HttpRequest):
-	if request.user.is_authenticated:
-		return redirect('weekly:daily_report')
-	return render(
-		request,
-		'weekly/home.html',
-		{
-			'title': 'Gazebo',
-			'page_heading': 'Payroll and reporting',
-		},
-	)
-
-
-@require_http_methods(['GET', 'POST'])
-def login_view(request: HttpRequest):
-	if request.user.is_authenticated:
-		return redirect('weekly:dashboard')
-	error = ''
-	if request.method == 'POST':
-		username = request.POST.get('username', '').strip()
-		password = request.POST.get('password', '')
-		user = authenticate(request, username=username, password=password)
-		if user is not None:
-			login(request, user)
-			next_url = (request.POST.get('next') or request.GET.get('next') or '').strip()
-			if next_url and url_has_allowed_host_and_scheme(
-				next_url,
-				allowed_hosts={request.get_host()},
-				require_https=request.is_secure(),
-			):
-				return redirect(next_url)
-			return redirect('weekly:dashboard')
-		error = 'Enter a valid username and password.'
-	return render(
-		request,
-		'weekly/login.html',
-		{
-			'title': 'Sign in — Gazebo',
-			'page_heading': 'Sign in',
-			'error': error,
-		},
-	)
-
-
-@require_http_methods(['GET', 'POST'])
-def logout_view(request: HttpRequest):
-	logout(request)
-	return redirect('weekly:home')
-
-
-@require_GET
-def dashboard(request: HttpRequest):
-	return render(
-		request,
-		'weekly/dashboard.html',
-		{
-			'title': 'Dashboard — Gazebo',
-			'page_heading': 'Dashboard',
-		},
-	)
-
-
-@require_GET
-def daily_help(request: HttpRequest):
-	return render(
-		request,
-		'weekly/help_daily.html',
-		{
-			'title': 'Daily report — How to use',
-			'page_heading': 'Daily report — How to use',
-		},
-	)
+from ..monthly_service import (
+	build_monthly_excel_bytes,
+	monthly_summaries_from_json,
+	monthly_summaries_to_json,
+	parse_monthly_inputs,
+)
+from ..payroll_service import (
+	PayrollResult,
+	build_excel_bytes,
+	build_staff_summary,
+	split_emp_agency_rows,
+	total_paid_hours_from_rows,
+)
 
 
 @require_GET
@@ -248,7 +56,6 @@ def case_studies(request: HttpRequest):
 def case_study_detail(request: HttpRequest, case_id: str):
 	case = get_case_study(case_id)
 	if case is None:
-		from django.http import Http404
 		raise Http404('Case study not found')
 	return render(
 		request,
@@ -259,161 +66,6 @@ def case_study_detail(request: HttpRequest, case_id: str):
 			'case': case,
 		},
 	)
-
-
-def _contract_audit_from_session(result_data: dict[str, Any]) -> dict[str, Any]:
-	return result_data.get('contract_audit') or {'missing': [], 'conflicts': [], 'review': []}
-
-
-@require_http_methods(['GET', 'POST'])
-def daily_report(request: HttpRequest):
-	result_data = request.session.get('daily_last_result', {})
-	all_rows = result_data.get('rows', [])
-	preview_rows = all_rows[:200]
-	summary = result_data.get('summary', {})
-	contract_audit = _contract_audit_from_session(result_data)
-	weekly_analytics = weekly_analytics_from_rows(all_rows)
-
-	if request.method == 'POST':
-		employee_file = request.FILES.get('employee_file')
-		contracted_file = request.FILES.get('contracted_file')
-		if not employee_file or not contracted_file:
-			messages.error(request, 'Upload both files: employee hours and contracted hours.')
-			return redirect('weekly:daily_report')
-		try:
-			employee_file.seek(0)
-			processing_date = parse_processing_date(employee_file)
-			employee_file.seek(0)
-			employee_rows = parse_employee_hours(employee_file)
-			payroll_result = calculate_payroll(employee_rows, contracted_file)
-			contracted_file.seek(0)
-			audit = audit_contract_integrity(employee_rows, contracted_file, payroll_result.rows)
-		except Exception as exc:
-			messages.error(request, f'Could not process files: {exc}')
-			return redirect('weekly:daily_report')
-
-		staff_summary = build_staff_summary(payroll_result.rows)
-		request.session['daily_last_result'] = {
-			'rows': payroll_result.rows,
-			'summary': {
-				**staff_summary,
-				'processing_date': processing_date,
-				'operator': 'HR',
-				'total_rows': len(payroll_result.rows),
-				'agency_rows': len(payroll_result.agency_rows),
-				'gazebo_rows': len(payroll_result.gazebo_rows),
-			},
-			'contract_audit': {
-				'missing': audit.missing,
-				'conflicts': audit.conflicts,
-				'review': audit.review,
-			},
-		}
-		request.session.modified = True
-		messages.success(request, f'Processed {len(payroll_result.rows)} employee rows.')
-		return redirect('weekly:daily_report')
-
-	return render(
-		request,
-		'weekly/daily_report.html',
-		{
-			'title': 'Daily report — Gazebo',
-			'page_heading': 'Daily report',
-			'preview_rows': preview_rows,
-			'summary': summary,
-			'contract_audit': contract_audit,
-			'weekly_analytics': weekly_analytics,
-		},
-	)
-
-
-@require_http_methods(['POST'])
-def daily_clear_results(request: HttpRequest):
-	request.session.pop('daily_last_result', None)
-	request.session.modified = True
-	messages.success(request, 'Previous results cleared.')
-	return redirect('weekly:daily_report')
-
-
-@require_GET
-def weekly_help(request: HttpRequest):
-	return render(
-		request,
-		'weekly/help_weekly.html',
-		{
-			'title': 'Weekly report — How to use',
-			'page_heading': 'Weekly report — How to use',
-		},
-	)
-
-
-@require_http_methods(['GET', 'POST'])
-def weekly_report(request: HttpRequest):
-	result_data = request.session.get('weekly_last_result', {})
-	all_rows = result_data.get('rows', [])
-	preview_rows = all_rows[:200]
-	summary = result_data.get('summary', {})
-	contract_audit = _contract_audit_from_session(result_data)
-	weekly_analytics = weekly_analytics_from_rows(all_rows)
-
-	if request.method == 'POST':
-		employee_file = request.FILES.get('employee_file')
-		contracted_file = request.FILES.get('contracted_file')
-		if not employee_file or not contracted_file:
-			messages.error(request, 'Upload both files: employee hours and contracted hours.')
-			return redirect('weekly:weekly_report')
-		try:
-			employee_file.seek(0)
-			processing_date = parse_processing_date(employee_file)
-			employee_file.seek(0)
-			employee_rows = parse_employee_hours(employee_file)
-			payroll_result = calculate_weekly_payroll(employee_rows, contracted_file)
-			contracted_file.seek(0)
-			audit = audit_contract_integrity(employee_rows, contracted_file, payroll_result.rows)
-		except Exception as exc:
-			messages.error(request, f'Could not process files: {exc}')
-			return redirect('weekly:weekly_report')
-
-		request.session['weekly_last_result'] = {
-			'rows': payroll_result.rows,
-			'summary': {
-				'total_rows': len(payroll_result.rows),
-				'total_paid_hours': payroll_result.total_paid_hours,
-				'agency_rows': len(payroll_result.agency_rows),
-				'gazebo_rows': len(payroll_result.gazebo_rows),
-				'processing_date': processing_date,
-			},
-			'contract_audit': {
-				'missing': audit.missing,
-				'conflicts': audit.conflicts,
-				'review': audit.review,
-			},
-		}
-		request.session.modified = True
-		messages.success(request, f'Processed {len(payroll_result.rows)} employee rows.')
-		return redirect('weekly:weekly_report')
-
-	return render(
-		request,
-		'weekly/weekly_report.html',
-		{
-			'title': 'Weekly report — Gazebo',
-			'page_heading': 'Weekly report',
-			'preview_rows': preview_rows,
-			'summary': summary,
-			'contract_audit': contract_audit,
-			'weekly_analytics': weekly_analytics,
-		},
-	)
-
-
-@require_http_methods(['POST'])
-def weekly_clear_results(request: HttpRequest):
-	request.session.pop('weekly_last_result', None)
-	request.session.modified = True
-	messages.success(request, 'Previous results cleared.')
-	return redirect('weekly:weekly_report')
-
 
 
 def _monthly_context(session_blob: dict) -> dict:
@@ -578,11 +230,6 @@ def employee_hour_contracts(request: HttpRequest):
 	)
 
 
-@require_GET
-def health_api(request: HttpRequest):
-	return JsonResponse({'ok': True, 'app': 'weekly'})
-
-
 def _daily_session_data(request: HttpRequest) -> tuple[list[dict], dict]:
 	result_data = request.session.get('daily_last_result', {})
 	rows = result_data.get('rows', [])
@@ -701,5 +348,3 @@ def download_weekly_pdf(request: HttpRequest):
 	response = HttpResponse(file_bytes, content_type='application/pdf')
 	response['Content-Disposition'] = f'attachment; filename="{week_report_filename("pdf", summary.get("processing_date"))}"'
 	return response
-
-

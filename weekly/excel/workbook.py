@@ -6,7 +6,7 @@ from typing import Any
 import pandas as pd
 from openpyxl.styles import Border, Side
 
-from ..payroll_service import PayrollResult
+from ..payroll.types import PayrollResult
 
 _TABLE_BORDER = Border(
     left=Side(style="thin"),
