@@ -21,8 +21,10 @@ from .parsing.common import (
     _to_text,
 )
 from .parsing.contract import (
-    ContractFileIndex,
-    EmployeeContractBlock,
+    ContractAuditResult,
+    _resolve_contracted_hours,
+    audit_contract_integrity,
+    audit_contract_pay_id_coverage,
     load_contract_file_index,
     parse_contracted_hours,
     parse_employee_display_names,
@@ -64,12 +66,6 @@ class PayrollResult:
     gazebo_rows: list[dict[str, Any]]
     total_paid_hours: float
 
-
-@dataclass
-class ContractAuditResult:
-    missing: list[dict[str, Any]]
-    conflicts: list[dict[str, Any]]
-    review: list[dict[str, Any]]
 
 
 def total_paid_hours_from_rows(rows: list[dict[str, Any]]) -> float:
@@ -245,144 +241,6 @@ def _parse_employee_legacy(rows: list[list[str]]) -> list[dict[str, Any]]:
     return result
 
 
-
-def audit_contract_pay_id_coverage(
-    employee_rows: list[dict[str, Any]], contracted_file_obj: Any
-) -> list[dict[str, Any]]:
-    """Employees whose Pay ID does not appear in the contract export (Payroll Number / Sage Pay Ref)."""
-    contracted_file_obj.seek(0)
-    index = load_contract_file_index(contracted_file_obj)
-    missing: list[dict[str, Any]] = []
-    for row in employee_rows:
-        sage_no = int(row["SageNo"])
-        if sage_no not in index.by_payroll:
-            missing.append(
-                {
-                    "SageNo": sage_no,
-                    "Name": row.get("Name"),
-                    "Category": row.get("Category"),
-                }
-            )
-    return missing
-
-
-def _same_person_blocks(
-    block_a: EmployeeContractBlock,
-    block_b: EmployeeContractBlock,
-    sage_no: int,
-    name_upper: str,
-    index: ContractFileIndex,
-) -> bool:
-    if block_a.source_row == block_b.source_row:
-        return True
-    if block_a.full_name and block_b.full_name and block_a.full_name.upper() == block_b.full_name.upper():
-        return True
-    sage_name = index.by_sage_name.get(sage_no, "").upper()
-    if sage_name and block_b.full_name.upper() == sage_name:
-        return True
-    if name_upper and block_b.full_name.upper() == name_upper:
-        return True
-    if name_upper and block_b.clock_name.upper() == name_upper:
-        return True
-    return False
-
-
-def _contract_candidates(
-    sage_no: int,
-    name_upper: str,
-    index: ContractFileIndex,
-) -> list[tuple[EmployeeContractBlock, str]]:
-    candidates: list[tuple[EmployeeContractBlock, str]] = []
-    seen_rows: set[int] = set()
-
-    def add(block: EmployeeContractBlock | None, reason: str) -> None:
-        if block is None or block.source_row in seen_rows:
-            return
-        seen_rows.add(block.source_row)
-        candidates.append((block, reason))
-
-    if sage_no in index.conflicted_pay_ids:
-        return candidates
-
-    add(index.pay_id_to_block.get(sage_no), "Pay ID")
-    add(index.name_to_block.get(name_upper), "employee name")
-    sage_name = index.by_sage_name.get(sage_no, "").upper()
-    if sage_name:
-        add(index.name_to_block.get(sage_name), "Sage name map")
-    clock_full = index.by_clock_name.get(name_upper, "").upper()
-    if clock_full:
-        add(index.name_to_block.get(clock_full), "clock name lookup")
-    return candidates
-
-
-def _resolve_contracted_hours(
-    sage_no: int,
-    name_upper: str,
-    index: ContractFileIndex,
-) -> tuple[float, str, str]:
-    """Return (contracted hours, ContractHourMatch, ContractMatchReason)."""
-    if sage_no in index.conflicted_pay_ids:
-        return 0.0, "Review", "Contract file ID conflict — manual review"
-
-    candidates = _contract_candidates(sage_no, name_upper, index)
-    if not candidates:
-        return 0.0, "No", "Pay ID not in contract export"
-
-    unique_blocks = {block.source_row: block for block, _ in candidates}
-    unique_hours = {block.contract_hours for block in unique_blocks.values()}
-    if len(unique_hours) > 1:
-        return 0.0, "Review", "Contract file ID conflict — manual review"
-
-    pay_block = index.pay_id_to_block.get(sage_no)
-    if pay_block is not None:
-        hours = pay_block.contract_hours
-        if hours == 0.0:
-            for block, reason in candidates:
-                if block.contract_hours > 0.0 and _same_person_blocks(pay_block, block, sage_no, name_upper, index):
-                    if reason == "Pay ID":
-                        continue
-                    return float(block.contract_hours), "Yes", f"Matched on {reason} (Pay ID had zero contract hours)"
-        return float(hours), "Yes", "Matched on Pay ID"
-
-    block, reason = candidates[0]
-    if reason == "employee name":
-        reason = "employee name"
-    elif reason == "clock name lookup":
-        reason = "employee name (clock name lookup)"
-    return float(block.contract_hours), "Yes", f"Matched on {reason}"
-
-
-def audit_contract_integrity(
-    employee_rows: list[dict[str, Any]],
-    contracted_file_obj: Any,
-    payroll_rows: list[dict[str, Any]] | None = None,
-) -> ContractAuditResult:
-    contracted_file_obj.seek(0)
-    index = load_contract_file_index(contracted_file_obj)
-    missing: list[dict[str, Any]] = []
-    for row in employee_rows:
-        sage_no = int(row["SageNo"])
-        if sage_no not in index.by_payroll:
-            missing.append(
-                {
-                    "SageNo": sage_no,
-                    "Name": row.get("Name"),
-                    "Category": row.get("Category"),
-                }
-            )
-    review: list[dict[str, Any]] = []
-    if payroll_rows:
-        for row in payroll_rows:
-            if row.get("ContractHourMatch") == "Review":
-                review.append(
-                    {
-                        "SageNo": row.get("SageNo"),
-                        "Name": row.get("Name"),
-                        "Category": row.get("Category"),
-                        "ContractMatchReason": row.get("ContractMatchReason"),
-                    }
-                )
-    return ContractAuditResult(missing=missing, conflicts=index.conflicts, review=review)
 
 
 def calculate_payroll(employee_rows: list[dict[str, Any]], contracted_file_obj: Any) -> PayrollResult:
