@@ -15,20 +15,24 @@ urlpatterns = [
 	path('dashboard/daily-report/download/', views.download_daily_excel, name='daily_download'),
 	path('dashboard/daily-report/download.csv', views.download_daily_csv, name='daily_download_csv'),
 	path('dashboard/daily-report/download.pdf', views.download_daily_pdf, name='daily_download_pdf'),
+	
+	# Weekly report urls
 	path('dashboard/weekly-report/', views.weekly_report, name='weekly_report'),
 	path('dashboard/weekly-report/clear/', views.weekly_clear_results, name='weekly_clear_results'),
 	path('dashboard/weekly-report/help/', views.weekly_help, name='weekly_help'),
 	path('dashboard/weekly-report/download/', views.download_weekly_excel, name='weekly_download'),
 	path('dashboard/weekly-report/download.csv', views.download_weekly_csv, name='weekly_download_csv'),
 	path('dashboard/weekly-report/download.pdf', views.download_weekly_pdf, name='weekly_download_pdf'),
+	
+	# Case studies urls
 	path('dashboard/case-studies/', views.case_studies, name='case_studies'),
 	path('dashboard/case-studies/<slug:case_id>/', views.case_study_detail, name='case_study_detail'),
+	
+	# Monthly report urls
 	path('dashboard/monthly-report/', views.monthly_report, name='monthly_report'),
-	path(
-		'dashboard/employee-hour-contracts/',
-		views.employee_hour_contracts,
-		name='employee_hour_contracts',
-	),
+	path('dashboard/monthly-report/employee-hour-contracts/', views.employee_hour_contracts, name='employee_hour_contracts'),
 	path('dashboard/monthly-report/download/', views.download_monthly_excel, name='monthly_download'),
+	
+	# Health api url
 	path('api/health', views.health_api, name='health'),
 ]

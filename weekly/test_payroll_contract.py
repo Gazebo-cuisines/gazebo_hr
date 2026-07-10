@@ -5,13 +5,25 @@ import unittest
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 
 from .export_service import (
+    DAY_REPORT_TITLE,
+    EXPORT_COLUMNS,
     WEEKLY_EXPORT_HEADER_LABELS,
+    _pdf_col_widths,
+    add_branding_cover_sheet,
+    build_csv_bytes,
+    build_pdf_bytes,
     build_weekly_csv_bytes,
+    day_report_filename,
+    format_report_date_label,
+    month_report_date_label,
+    month_report_filename,
+    week_report_filename,
     weekly_export_header_labels,
 )
 from .payroll_service import (
@@ -26,14 +38,158 @@ from .payroll_service import (
     audit_contract_pay_id_coverage,
     build_emp_agency_total_df,
     build_excel_bytes,
+    build_staff_summary,
     calculate_payroll,
     calculate_weekly_payroll,
     load_contract_file_index,
     parse_contracted_hours,
     parse_employee_display_names,
     parse_employee_hours,
+    parse_processing_date,
     total_paid_hours_from_rows,
 )
+
+
+class DayReportCsvPdfExportTest(unittest.TestCase):
+    _SUMMARY = {
+        "processing_date": "29.06.2026",
+        "total_staff": 3,
+        "agency_staff": 1,
+        "gazebo_staff": 1,
+        "gazebo_paid_holiday": 1,
+        "total_paid_hours": 24.0,
+        "operator": "HR",
+    }
+
+    def test_csv_day_report_preamble(self) -> None:
+        raw = build_csv_bytes([], summary=self._SUMMARY).decode("utf-8-sig")
+        lines = raw.splitlines()
+        self.assertIn(f"{DAY_REPORT_TITLE}", lines[0])
+        self.assertIn("Data Processing for date,29.06.2026", raw)
+        self.assertIn("Total staff count,3,count only if they have worked", raw)
+        self.assertIn("Report metadata", raw)
+        self.assertIn(f"Report name,{DAY_REPORT_TITLE}", raw)
+        self.assertIn("Operator,HR", raw)
+
+    def test_pdf_day_report_builds(self) -> None:
+        data = build_pdf_bytes([], summary=self._SUMMARY)
+        self.assertTrue(data.startswith(b"%PDF"))
+
+    def test_pdf_table_col_widths_fit_page(self) -> None:
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.units import mm
+        from weekly.export_service import _PDF_MARGIN_MM
+
+        page_w = landscape(A4)[0] - (2 * _PDF_MARGIN_MM * mm)
+        widths = _pdf_col_widths(EXPORT_COLUMNS, page_w)
+        self.assertAlmostEqual(sum(widths), page_w, places=1)
+
+    def test_day_report_filename_uses_processing_date(self) -> None:
+        self.assertEqual(
+            day_report_filename("pdf", "29.06.2026"),
+            "Day Report - 29.06.2026 - Gazebo HR.pdf",
+        )
+
+    def test_week_report_filename_uses_processing_date(self) -> None:
+        self.assertEqual(
+            week_report_filename("xlsx", "29.06.2026"),
+            "Week Report - 29.06.2026 - Gazebo HR.xlsx",
+        )
+
+    def test_month_report_filename_uses_period_end_date(self) -> None:
+        self.assertEqual(
+            month_report_filename("xlsx", "D 30.06.2026"),
+            "Month Report - 30.06.2026 - Gazebo HR.xlsx",
+        )
+
+    def test_format_report_date_label_strips_d_prefix(self) -> None:
+        self.assertEqual(format_report_date_label("D 30.06.2026"), "30.06.2026")
+
+    def test_month_report_date_label_from_summaries(self) -> None:
+        summaries = [
+            SimpleNamespace(start_date="01.06.2026", end_date="07.06.2026"),
+            SimpleNamespace(start_date="08.06.2026", end_date="30.06.2026"),
+        ]
+        self.assertEqual(month_report_date_label(summaries), "30.06.2026")
+
+
+class DayReportCoverSheetTest(unittest.TestCase):
+    def test_cover_shows_staff_summary_and_metadata(self) -> None:
+        pr = PayrollResult(
+            rows=[{"Category": "D-STAFF", "TotalPaidHours": 8.0, "BasicHours": 8.0, "MonFriOvertime": 0.0, "SatSunOvertime": 0.0, "AnnualHoliday": 0.0}],
+            agency_rows=[],
+            gazebo_rows=[{"Category": "D-STAFF", "TotalPaidHours": 8.0, "BasicHours": 8.0, "MonFriOvertime": 0.0, "SatSunOvertime": 0.0, "AnnualHoliday": 0.0}],
+            total_paid_hours=8.0,
+        )
+        summary = {
+            "processing_date": "29.06.2026",
+            "total_staff": 1,
+            "agency_staff": 0,
+            "gazebo_staff": 1,
+            "gazebo_paid_holiday": 0,
+            "total_paid_hours": 8.0,
+            "operator": "HR",
+        }
+        cover_bytes = add_branding_cover_sheet(build_excel_bytes(pr), summary=summary)
+        ws = load_workbook(BytesIO(cover_bytes))["Cover"]
+        self.assertEqual(ws["A5"].value, "Data Processing for date")
+        self.assertEqual(ws["B5"].value, "29.06.2026")
+        self.assertEqual(ws["A6"].value, "Total staff count")
+        self.assertEqual(ws["C6"].value, "count only if they have worked")
+        self.assertEqual(ws["B10"].value, "8.00")
+        self.assertEqual(ws["A13"].value, "Report metadata")
+        self.assertEqual(ws["A14"].value, "Report name")
+        self.assertEqual(ws["B14"].value, DAY_REPORT_TITLE)
+        self.assertEqual(ws["B16"].value, "HR")
+
+
+class ParseProcessingDateTest(unittest.TestCase):
+    def test_reads_a5_from_clockrite_sample(self) -> None:
+        path = Path(__file__).resolve().parent.parent / "data/day_report_data/dgross_paysummary2 (5).xls"
+        if not path.exists():
+            self.skipTest("sample file missing")
+        with path.open("rb") as f:
+            self.assertEqual(parse_processing_date(f), "29.06.2026")
+
+    def test_us_style_date_string(self) -> None:
+        buf = BytesIO()
+        wb = Workbook()
+        ws = wb.active
+        ws["A5"] = "6/29/2026"
+        wb.save(buf)
+        buf.seek(0)
+        self.assertEqual(parse_processing_date(buf), "29.06.2026")
+
+
+class BuildStaffSummaryTest(unittest.TestCase):
+    def test_additive_counts_on_fixture(self) -> None:
+        rows = [
+            {"Category": "A-EL PROD", "BasicHours": 8.0, "MonFriOvertime": 0.0, "SatSunOvertime": 0.0, "AnnualHoliday": 0.0, "TotalPaidHours": 8.0},
+            {"Category": "A-EL PROD", "BasicHours": 0.0, "MonFriOvertime": 0.0, "SatSunOvertime": 0.0, "AnnualHoliday": 0.0, "TotalPaidHours": 0.0},
+            {"Category": "D-STAFF", "BasicHours": 7.5, "MonFriOvertime": 0.5, "SatSunOvertime": 0.0, "AnnualHoliday": 0.0, "TotalPaidHours": 8.0},
+            {"Category": "D-STAFF", "BasicHours": 0.0, "MonFriOvertime": 0.0, "SatSunOvertime": 0.0, "AnnualHoliday": 8.0, "TotalPaidHours": 8.0},
+        ]
+        summary = build_staff_summary(rows)
+        self.assertEqual(summary["agency_staff"], 1)
+        self.assertEqual(summary["gazebo_staff"], 1)
+        self.assertEqual(summary["gazebo_paid_holiday"], 1)
+        self.assertEqual(summary["total_staff"], 3)
+        self.assertEqual(summary["total_paid_hours"], 24.0)
+
+    def test_sample_day_report_file(self) -> None:
+        data = Path(__file__).resolve().parent.parent / "data/day_report_data"
+        emp = data / "dgross_paysummary2 (5).xls"
+        con = data / "demployees_2023 (3).xls"
+        if not emp.exists() or not con.exists():
+            self.skipTest("sample files missing")
+        with emp.open("rb") as ef, con.open("rb") as cf:
+            result = calculate_payroll(parse_employee_hours(ef), cf)
+        summary = build_staff_summary(result.rows)
+        self.assertEqual(summary["total_staff"], 146)
+        self.assertEqual(summary["agency_staff"], 59)
+        self.assertEqual(summary["gazebo_staff"], 81)
+        self.assertEqual(summary["gazebo_paid_holiday"], 6)
+        self.assertEqual(summary["total_paid_hours"], 1191.38)
 
 
 class TotalPaidHoursFromRowsTest(unittest.TestCase):

@@ -19,21 +19,27 @@ from .payroll_service import (
 	_sum_hour_bands,
 	audit_contract_integrity,
 	build_excel_bytes,
+	build_staff_summary,
 	calculate_payroll,
 	calculate_weekly_payroll,
 	parse_employee_hours,
+	parse_processing_date,
 	split_emp_agency_rows,
 	total_paid_hours_from_rows,
 )
 from .case_studies_data import CASE_STUDIES, get_case_study
 from .export_service import (
+	EXPORT_COLUMNS,
 	add_branding_cover_sheet,
 	add_weekly_branding_cover_sheet,
 	build_csv_bytes,
 	build_pdf_bytes,
 	build_weekly_csv_bytes,
 	build_weekly_pdf_bytes,
-	export_filename,
+	day_report_filename,
+	month_report_date_label,
+	month_report_filename,
+	week_report_filename,
 	WEEKLY_EXPORT_HEADER_LABELS,
 )
 
@@ -275,6 +281,9 @@ def daily_report(request: HttpRequest):
 			messages.error(request, 'Upload both files: employee hours and contracted hours.')
 			return redirect('weekly:daily_report')
 		try:
+			employee_file.seek(0)
+			processing_date = parse_processing_date(employee_file)
+			employee_file.seek(0)
 			employee_rows = parse_employee_hours(employee_file)
 			payroll_result = calculate_payroll(employee_rows, contracted_file)
 			contracted_file.seek(0)
@@ -283,11 +292,14 @@ def daily_report(request: HttpRequest):
 			messages.error(request, f'Could not process files: {exc}')
 			return redirect('weekly:daily_report')
 
+		staff_summary = build_staff_summary(payroll_result.rows)
 		request.session['daily_last_result'] = {
 			'rows': payroll_result.rows,
 			'summary': {
+				**staff_summary,
+				'processing_date': processing_date,
+				'operator': 'HR',
 				'total_rows': len(payroll_result.rows),
-				'total_paid_hours': payroll_result.total_paid_hours,
 				'agency_rows': len(payroll_result.agency_rows),
 				'gazebo_rows': len(payroll_result.gazebo_rows),
 			},
@@ -351,6 +363,9 @@ def weekly_report(request: HttpRequest):
 			messages.error(request, 'Upload both files: employee hours and contracted hours.')
 			return redirect('weekly:weekly_report')
 		try:
+			employee_file.seek(0)
+			processing_date = parse_processing_date(employee_file)
+			employee_file.seek(0)
 			employee_rows = parse_employee_hours(employee_file)
 			payroll_result = calculate_weekly_payroll(employee_rows, contracted_file)
 			contracted_file.seek(0)
@@ -366,6 +381,7 @@ def weekly_report(request: HttpRequest):
 				'total_paid_hours': payroll_result.total_paid_hours,
 				'agency_rows': len(payroll_result.agency_rows),
 				'gazebo_rows': len(payroll_result.gazebo_rows),
+				'processing_date': processing_date,
 			},
 			'contract_audit': {
 				'missing': audit.missing,
@@ -545,7 +561,8 @@ def download_monthly_excel(request: HttpRequest):
 		file_bytes,
 		content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 	)
-	response['Content-Disposition'] = 'attachment; filename="monthly_report_output.xlsx"'
+	date_label = month_report_date_label(summaries)
+	response['Content-Disposition'] = f'attachment; filename="{month_report_filename("xlsx", date_label)}"'
 	return response
 
 
@@ -568,7 +585,15 @@ def health_api(request: HttpRequest):
 
 def _daily_session_data(request: HttpRequest) -> tuple[list[dict], dict]:
 	result_data = request.session.get('daily_last_result', {})
-	return result_data.get('rows', []), result_data.get('summary', {})
+	rows = result_data.get('rows', [])
+	stored = result_data.get('summary', {})
+	if not rows:
+		return [], stored
+	summary = build_staff_summary(rows)
+	if stored.get('processing_date'):
+		summary['processing_date'] = stored['processing_date']
+	summary['operator'] = stored.get('operator', 'HR')
+	return rows, summary
 
 
 @require_GET
@@ -585,7 +610,7 @@ def download_daily_excel(request: HttpRequest):
 		gazebo_rows=gazebo_rows,
 		total_paid_hours=total_paid_hours_from_rows(rows),
 	)
-	file_bytes = build_excel_bytes(payroll_result)
+	file_bytes = build_excel_bytes(payroll_result, employee_columns=EXPORT_COLUMNS)
 	try:
 		file_bytes = add_branding_cover_sheet(file_bytes, summary=summary)
 	except Exception:
@@ -594,7 +619,7 @@ def download_daily_excel(request: HttpRequest):
 		file_bytes,
 		content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 	)
-	response['Content-Disposition'] = f'attachment; filename="{export_filename("gazebo_daily_report", "xlsx")}"'
+	response['Content-Disposition'] = f'attachment; filename="{day_report_filename("xlsx", summary.get("processing_date"))}"'
 	return response
 
 
@@ -606,7 +631,7 @@ def download_daily_csv(request: HttpRequest):
 		return redirect('weekly:daily_report')
 	file_bytes = build_csv_bytes(rows, summary=summary)
 	response = HttpResponse(file_bytes, content_type='text/csv; charset=utf-8')
-	response['Content-Disposition'] = f'attachment; filename="{export_filename("gazebo_daily_report", "csv")}"'
+	response['Content-Disposition'] = f'attachment; filename="{day_report_filename("csv", summary.get("processing_date"))}"'
 	return response
 
 
@@ -618,7 +643,7 @@ def download_daily_pdf(request: HttpRequest):
 		return redirect('weekly:daily_report')
 	file_bytes = build_pdf_bytes(rows, summary=summary)
 	response = HttpResponse(file_bytes, content_type='application/pdf')
-	response['Content-Disposition'] = f'attachment; filename="{export_filename("gazebo_daily_report", "pdf")}"'
+	response['Content-Disposition'] = f'attachment; filename="{day_report_filename("pdf", summary.get("processing_date"))}"'
 	return response
 
 
@@ -650,7 +675,7 @@ def download_weekly_excel(request: HttpRequest):
 		file_bytes,
 		content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 	)
-	response['Content-Disposition'] = f'attachment; filename="{export_filename("gazebo_weekly_report", "xlsx")}"'
+	response['Content-Disposition'] = f'attachment; filename="{week_report_filename("xlsx", summary.get("processing_date"))}"'
 	return response
 
 
@@ -662,7 +687,7 @@ def download_weekly_csv(request: HttpRequest):
 		return redirect('weekly:weekly_report')
 	file_bytes = build_weekly_csv_bytes(rows, summary=summary)
 	response = HttpResponse(file_bytes, content_type='text/csv; charset=utf-8')
-	response['Content-Disposition'] = f'attachment; filename="{export_filename("gazebo_weekly_report", "csv")}"'
+	response['Content-Disposition'] = f'attachment; filename="{week_report_filename("csv", summary.get("processing_date"))}"'
 	return response
 
 
@@ -674,7 +699,7 @@ def download_weekly_pdf(request: HttpRequest):
 		return redirect('weekly:weekly_report')
 	file_bytes = build_weekly_pdf_bytes(rows, summary=summary)
 	response = HttpResponse(file_bytes, content_type='application/pdf')
-	response['Content-Disposition'] = f'attachment; filename="{export_filename("gazebo_weekly_report", "pdf")}"'
+	response['Content-Disposition'] = f'attachment; filename="{week_report_filename("pdf", summary.get("processing_date"))}"'
 	return response
 
 
