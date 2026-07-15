@@ -30,7 +30,7 @@ from reportlab.platypus import (
 
 
 BRAND_NAME = "Gazebo HR"
-BRAND_TAGLINE = "Daily payroll & reporting"
+BRAND_TAGLINE = "Day payroll & reporting"
 PRIMARY_BLUE = "#003078"
 ACCENT_BLUE = "#1d70b8"
 COVER_STATS_GREY = "#D9D9D9"
@@ -59,7 +59,7 @@ EXPORT_COLUMNS = [
     "Overtime",
 ]
 
-WEEKLY_BRAND_TAGLINE = "Weekly payroll & reporting"
+WEEKLY_BRAND_TAGLINE = "Week payroll & reporting"
 
 WEEKLY_EXPORT_COLUMNS = [
     "Name",
@@ -333,7 +333,7 @@ def add_branding_cover_sheet(
 ) -> bytes:
     """Insert a branded cover sheet at index 0 of an existing xlsx workbook."""
     wb = load_workbook(BytesIO(xlsx_bytes))
-    ws = wb.create_sheet(title="Cover", index=0)
+    ws = wb.create_sheet(title="Overview", index=0)
 
     header_fill = PatternFill("solid", fgColor=PRIMARY_BLUE.lstrip("#"))
     stats_fill = PatternFill("solid", fgColor=COVER_STATS_GREY.lstrip("#"))

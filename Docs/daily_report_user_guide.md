@@ -63,7 +63,7 @@ Click **Export data** and pick a format:
 
 | Format | Best for | Includes |
 | ------ | -------- | -------- |
-| **Excel** | Internal HR use, further calcs | Branded "Cover" sheet + All Data, Agency, Gazebo, Analysis, EMP Agency Total, Category summary, Hours over 60 |
+| **Excel** | Internal HR use, further calcs | Branded "Overview" sheet + All Data, Agency Employee, Gazebo Employee, Hours over 60 |
 | **CSV** | Importing to other systems | Brand + generated date metadata, then headers + all rows |
 | **PDF** | Sharing / printing | Branded landscape page, summary line, full table, footer with brand + page number |
 

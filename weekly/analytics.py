@@ -20,6 +20,15 @@ def _hours_to_float(value: Any) -> float:
 		return 0.0
 
 
+def _sage_no_as_int(value: Any) -> int | str:
+	if value is None or value == '':
+		return ''
+	try:
+		return int(float(value))
+	except (TypeError, ValueError):
+		return ''
+
+
 def _rollup_categories(rows: list[dict[str, Any]], top_n: int = 10) -> tuple[list[str], list[float], list[int]]:
 	hours: dict[str, float] = defaultdict(float)
 	counts: dict[str, int] = defaultdict(int)
@@ -62,7 +71,7 @@ def weekly_analytics_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any] | N
 			over_60.append(
 				{
 					'Name': row.get('Name') or '',
-					'SageNo': row.get('SageNo'),
+					'SageNo': _sage_no_as_int(row.get('SageNo')),
 					'Category': row.get('Category') or '',
 					'TotalPaidHours': h,
 				}
