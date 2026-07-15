@@ -246,7 +246,8 @@ def _apply_excel_two_decimal_format(workbook: Any) -> None:
     for ws in workbook.worksheets:
         for row in ws.iter_rows():
             for cell in row:
-                if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+                # float hours only — leave ints (SageNo) unformatted so 1564 stays 1564, not 1564.00
+                if isinstance(cell.value, float) and not isinstance(cell.value, bool):
                     cell.number_format = _EXCEL_NUM_FORMAT
 
 
@@ -257,19 +258,26 @@ def _select_export_columns(df: pd.DataFrame, columns: list[str] | None) -> pd.Da
     return df[present]
 
 
+def _coerce_sage_no_int(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "SageNo" not in df.columns:
+        return df
+    out = df.copy()
+    out["SageNo"] = pd.to_numeric(out["SageNo"], errors="coerce").astype("Int64")
+    return out
+
+
 def build_excel_bytes(
     result: PayrollResult,
     *,
     column_rename: dict[str, str] | None = None,
     employee_columns: list[str] | None = None,
 ) -> bytes:
-    all_df = _select_export_columns(pd.DataFrame(result.rows), employee_columns)
-    agency_df = _select_export_columns(pd.DataFrame(result.agency_rows), employee_columns)
-    gazebo_df = _select_export_columns(pd.DataFrame(result.gazebo_rows), employee_columns)
+    all_df = _coerce_sage_no_int(_select_export_columns(pd.DataFrame(result.rows), employee_columns))
+    agency_df = _coerce_sage_no_int(_select_export_columns(pd.DataFrame(result.agency_rows), employee_columns))
+    gazebo_df = _coerce_sage_no_int(_select_export_columns(pd.DataFrame(result.gazebo_rows), employee_columns))
     analysis_df = _build_analysis_dataframe(all_df)
     emp_agency_df = build_emp_agency_total_df(result)
-    category_hr_df = build_category_summary_hr_df(analysis_df)
-    over60_df = build_hours_over_60_df(all_df)
+    over60_df = _coerce_sage_no_int(build_hours_over_60_df(all_df))
 
     if column_rename:
         all_df = all_df.rename(columns=column_rename)
@@ -285,7 +293,6 @@ def build_excel_bytes(
         all_df.to_excel(writer, sheet_name="All Data", index=False)
         agency_df.to_excel(writer, sheet_name="Agency Employee", index=False)
         gazebo_df.to_excel(writer, sheet_name="Gazebo Employee", index=False)
-        analysis_df.to_excel(writer, sheet_name="Analysis", index=False)
 
         if not analysis_df.empty:
             ws_all = writer.book["All Data"]
@@ -322,12 +329,6 @@ def build_excel_bytes(
             end_row = _append_band_values_row(ws_all, end_row, "Difference", diff_bands)
             _apply_table_border(ws_all, table_start, end_row - 1, _CATEGORY_COL, border_max_col)
 
-            ws_an = writer.book["Analysis"]
-            an_start = int(ws_an.max_row) + 2
-            _append_grand_total_row_openpyxl(ws_an, analysis_df, an_start)
-
-        emp_agency_df.to_excel(writer, sheet_name="EMP Agency Total", index=False)
-        category_hr_df.to_excel(writer, sheet_name="Category summary", index=False)
         over60_df.to_excel(writer, sheet_name="Hours over 60", index=False)
         _apply_excel_two_decimal_format(writer.book)
 

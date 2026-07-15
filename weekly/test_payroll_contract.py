@@ -131,7 +131,7 @@ class DayReportCoverSheetTest(unittest.TestCase):
             "operator": "HR",
         }
         cover_bytes = add_branding_cover_sheet(build_excel_bytes(pr), summary=summary)
-        ws = load_workbook(BytesIO(cover_bytes))["Cover"]
+        ws = load_workbook(BytesIO(cover_bytes))["Overview"]
         self.assertEqual(ws["A5"].value, "Data Processing for date")
         self.assertEqual(ws["B5"].value, "29.06.2026")
         self.assertEqual(ws["A6"].value, "Total staff count")
@@ -626,8 +626,9 @@ class BuildExcelNewSheetsTest(unittest.TestCase):
         data = build_excel_bytes(pr)
         with zipfile.ZipFile(BytesIO(data)) as zf:
             wbxml = zf.read("xl/workbook.xml").decode("utf-8")
-        for name in ("EMP Agency Total", "Category summary", "Hours over 60"):
-            self.assertIn(name, wbxml, msg=f"missing sheet {name!r}")
+        self.assertIn("Hours over 60", wbxml)
+        for name in ("Analysis", "EMP Agency Total", "Category summary"):
+            self.assertNotIn(name, wbxml, msg=f"unexpected sheet {name!r}")
 
     def test_category_breakdown_block_column_offset(self) -> None:
         band = {
