@@ -30,7 +30,7 @@ from .parsing.contract import (
     parse_contracted_hours,
     parse_employee_display_names,
 )
-from .parsing.employee_hours import parse_employee_hours, parse_processing_date
+from .parsing.employee_hours import parse_employee_hours, parse_processing_date, parse_date_range, parse_report_date_label
 from .payroll.calculate import (
     HOLIDAY_PAY_FACTOR,
     calculate_payroll,
@@ -78,6 +78,8 @@ __all__ = [
     "parse_employee_display_names",
     "parse_employee_hours",
     "parse_processing_date",
+    "parse_date_range",
+    "parse_report_date_label",
     "split_emp_agency_rows",
     "total_paid_hours_from_rows",
 ]

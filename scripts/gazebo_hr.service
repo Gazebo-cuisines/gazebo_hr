@@ -1,0 +1,22 @@
+[Unit]
+Description=gazebo_hr gunicorn
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/gazebo_hr
+EnvironmentFile=/opt/gazebo_hr/.env
+ExecStart=/opt/gazebo_hr/venv/bin/gunicorn config.wsgi:application \
+    --bind 0.0.0.0:8000 \
+    --workers 2 \
+    --timeout 120 \
+    --access-logfile /opt/gazebo_hr/logs/gunicorn-access.log \
+    --error-logfile /opt/gazebo_hr/logs/gunicorn-error.log
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

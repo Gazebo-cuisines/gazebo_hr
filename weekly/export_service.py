@@ -134,7 +134,8 @@ def _staff_summary_rows(summary: dict[str, Any]) -> list[tuple[str, str, bool]]:
     rows: list[tuple[str, str, bool]] = []
     proc_date = summary.get("processing_date")
     if proc_date:
-        rows.append(("Data Processing for date", str(proc_date), False))
+        label = "Date range" if " to " in str(proc_date).lower() else "Data Processing for date"
+        rows.append((label, str(proc_date), False))
     if "total_staff" in summary:
         rows.append(("Total staff count", str(summary.get("total_staff", "")), True))
         rows.extend([
@@ -563,6 +564,11 @@ def format_report_date_label(raw: str | None) -> str:
     text = (raw or "").strip().removeprefix("D ").strip()
     if not text:
         return datetime.now().strftime("%d.%m.%Y")
+    sep = " to "
+    idx = text.lower().find(sep)
+    if idx >= 0:
+        left, right = text[:idx].strip(), text[idx + len(sep) :].strip()
+        return f"{format_report_date_label(left)} to {format_report_date_label(right)}"
     for fmt in ("%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
         try:
             return datetime.strptime(text.split()[0], fmt).strftime("%d.%m.%Y")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .common import (
@@ -18,6 +19,8 @@ from .common import (
     _to_text,
 )
 
+_DATE_RANGE_RE = re.compile(r"date\s*range\s+(\S+)\s+to\s+(\S+)", re.I)
+
 
 def parse_processing_date(file_obj: Any) -> str | None:
     """Report date from ClockRite employee hours file cell A5, as DD.MM.YYYY."""
@@ -29,6 +32,31 @@ def parse_processing_date(file_obj: Any) -> str | None:
     if parsed is None:
         return None
     return parsed.strftime("%d.%m.%Y")
+
+
+def parse_date_range(file_obj: Any) -> str | None:
+    """Footer 'Date Range DD/MM/YYYY to DD/MM/YYYY' as 'DD.MM.YYYY to DD.MM.YYYY'."""
+    df = _load_sheet(file_obj)
+    for rec in reversed(df.values.tolist()):
+        for cell in rec:
+            match = _DATE_RANGE_RE.search(_to_text(cell))
+            if not match:
+                continue
+            start = _parse_date_cell(match.group(1))
+            end = _parse_date_cell(match.group(2))
+            if start and end:
+                return f"{start.strftime('%d.%m.%Y')} to {end.strftime('%d.%m.%Y')}"
+    return None
+
+
+def parse_report_date_label(file_obj: Any) -> str | None:
+    """Prefer ClockRite footer date range; fall back to A5 processing date."""
+    file_obj.seek(0)
+    label = parse_date_range(file_obj)
+    if label:
+        return label
+    file_obj.seek(0)
+    return parse_processing_date(file_obj)
 
 
 def parse_employee_hours(file_obj: Any) -> list[dict[str, Any]]:

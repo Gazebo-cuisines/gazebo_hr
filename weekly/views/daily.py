@@ -11,7 +11,7 @@ from ..payroll_service import (
 	build_staff_summary,
 	calculate_payroll,
 	parse_employee_hours,
-	parse_processing_date,
+	parse_report_date_label,
 )
 from .common import _contract_audit_from_session
 
@@ -45,7 +45,7 @@ def daily_report(request: HttpRequest):
 			return redirect('weekly:daily_report')
 		try:
 			employee_file.seek(0)
-			processing_date = parse_processing_date(employee_file)
+			processing_date = parse_report_date_label(employee_file)
 			employee_file.seek(0)
 			employee_rows = parse_employee_hours(employee_file)
 			payroll_result = calculate_payroll(employee_rows, contracted_file)

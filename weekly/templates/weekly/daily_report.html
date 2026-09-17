@@ -231,6 +231,7 @@
 {% if summary.total_rows %}
 <div id="weekly-results" class="results-toolbar mt-3">
 	<div class="results-toolbar__stats">
+		{% if summary.processing_date %}<span><strong>Date range:</strong> {{ summary.processing_date }}</span>{% endif %}
 		<span><strong>Rows:</strong> {{ summary.total_rows }}</span>
 		<span><strong>Agency:</strong> {{ summary.agency_rows }}</span>
 		<span><strong>Gazebo:</strong> {{ summary.gazebo_rows }}</span>
