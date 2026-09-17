@@ -43,9 +43,11 @@ from .payroll_service import (
     calculate_weekly_payroll,
     load_contract_file_index,
     parse_contracted_hours,
+    parse_date_range,
     parse_employee_display_names,
     parse_employee_hours,
     parse_processing_date,
+    parse_report_date_label,
     total_paid_hours_from_rows,
 )
 
@@ -90,6 +92,12 @@ class DayReportCsvPdfExportTest(unittest.TestCase):
             "Day Report - 29.06.2026 - Gazebo HR.pdf",
         )
 
+    def test_day_report_filename_uses_date_range(self) -> None:
+        self.assertEqual(
+            day_report_filename("xlsx", "16.09.2026 to 16.09.2026"),
+            "Day Report - 16.09.2026 to 16.09.2026 - Gazebo HR.xlsx",
+        )
+
     def test_week_report_filename_uses_processing_date(self) -> None:
         self.assertEqual(
             week_report_filename("xlsx", "29.06.2026"),
@@ -104,6 +112,12 @@ class DayReportCsvPdfExportTest(unittest.TestCase):
 
     def test_format_report_date_label_strips_d_prefix(self) -> None:
         self.assertEqual(format_report_date_label("D 30.06.2026"), "30.06.2026")
+
+    def test_format_report_date_label_keeps_range(self) -> None:
+        self.assertEqual(
+            format_report_date_label("16/09/2026 to 16/09/2026"),
+            "16.09.2026 to 16.09.2026",
+        )
 
     def test_month_report_date_label_from_summaries(self) -> None:
         summaries = [
@@ -159,6 +173,27 @@ class ParseProcessingDateTest(unittest.TestCase):
         wb.save(buf)
         buf.seek(0)
         self.assertEqual(parse_processing_date(buf), "29.06.2026")
+
+
+class ParseDateRangeTest(unittest.TestCase):
+    def test_reads_footer_from_sample(self) -> None:
+        path = Path(__file__).resolve().parent.parent / "data/17.09.2026/dgross_paysummary2 (7).xls"
+        if not path.exists():
+            self.skipTest("sample file missing")
+        with path.open("rb") as f:
+            self.assertEqual(parse_date_range(f), "16.09.2026 to 16.09.2026")
+        with path.open("rb") as f:
+            self.assertEqual(parse_report_date_label(f), "16.09.2026 to 16.09.2026")
+
+    def test_prefers_range_over_a5(self) -> None:
+        buf = BytesIO()
+        wb = Workbook()
+        ws = wb.active
+        ws["A5"] = "2026-09-17"
+        ws["A10"] = "Date Range 16/09/2026 to 16/09/2026"
+        wb.save(buf)
+        buf.seek(0)
+        self.assertEqual(parse_report_date_label(buf), "16.09.2026 to 16.09.2026")
 
 
 class BuildStaffSummaryTest(unittest.TestCase):

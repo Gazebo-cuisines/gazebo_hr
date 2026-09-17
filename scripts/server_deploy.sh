@@ -9,7 +9,12 @@ VENV="$APP_DIR/venv"
 cd "$APP_DIR"
 
 if [ ! -d "$VENV" ]; then
-    python3 -m venv "$VENV"
+    # Django 6 requires Python >=3.12
+    if command -v python3.12 >/dev/null 2>&1; then
+        python3.12 -m venv "$VENV"
+    else
+        python3 -m venv "$VENV"
+    fi
 fi
 
 "$VENV/bin/pip" install --quiet --upgrade pip wheel
